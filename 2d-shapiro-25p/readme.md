@@ -2,6 +2,7 @@
 
 这版 vectime.c 借鉴 3d-jacobi-27p 的 extra-array 思路。
 接口和 define.h 里的 Compute_scalar / Compute_1vector 都不改。
+当前 vectime 假设 NX 和 NY 足够进入 temporal-vector 主体。
 
 时间向量仍然是 4 个 lane。
 对于 base x 和 y，向量内容沿用 2d9p 的布局：
@@ -16,6 +17,9 @@ x - 2, x - 1, x, x + 1, x + 2。
 BV5 是当前 x 生成的新右 slice。
 x 循环结束后做指针轮转：
 BV0 <- BV1 <- BV2 <- BV3 <- BV4 <- BV5 <- old BV0。
+热路径使用显式 BV0..BV5 指针，不再通过 BV[6] 指针数组访问。
+BV extra array 由 64 字节对齐分配，每行正好 4 个 double。
+因此 BV 内部读写使用 aligned load/store，普通 B 数组仍使用 unaligned load/store。
 
 每个时间 tile 仍然分三段：
 左侧 scalar 预热阶梯区。
@@ -36,9 +40,11 @@ h1 = x - 1 + x + 1
 h2 = x - 2 + x + 2
 
 一个 y chunk 先装入 5 行 row0..row4。
-计算完一个 yy 后，row0..row4 左移一行，只加载下一行。
+计算完一个 yy 后，用 row slot 环形复用，只加载下一行。
 这样 4 个连续 yy 需要加载 y - 2 到 y + 5 共 8 行。
 每行只保留 c/h1/h2，所以窗口从 25 个 vec 降到 15 个 vec。
+compute_25p_feature_window 按系数组逐段生成 sum，并立刻 FMA 到 v_result。
+这样避免 5 组 sum 同时长时间占用寄存器。
 
 当前没有 BV_ACC，也没有把 partial sum 写回内存。
 取消了旧版 pending 队列，新右 slice 直接写入 BV5。
