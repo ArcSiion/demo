@@ -65,8 +65,8 @@ int checkresult( int NX, int NY, double (* A_correct)[ NY+2*YSTART], double (* A
 	for (x= XSTART; x < NX + XSTART; x++) {
 		for (y = YSTART; y < NY + YSTART; y++) {
 
-			/* 只要有效计算域中有一个点不一致，就报告错误 */
-			if(A[x][y] != A_correct[x][y]){
+			/* 参考 3d27p：允许浮点重排/FMA 带来的舍入级差异。 */
+			if (fabs(A[x][y] - A_correct[x][y]) > 1e-12 * fmax(1.0, fmax(fabs(A[x][y]), fabs(A_correct[x][y])))) {
 				printf("x = [%d], y = [%d], Correct = %f, Wrong = %f\n", x, y, A_correct[x][y], A[x][y]);
 				correct = 0;
 			}

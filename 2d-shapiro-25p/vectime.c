@@ -2,35 +2,39 @@
 
 #define load_row_bv(row, yy) {\
 		int _load_y = (yy);\
-		vload(row##_m2, BV[0][_load_y - YSTART][0]);\
-		vload(row##_m1, BV[1][_load_y - YSTART][0]);\
-		vload(row##_0,  BV[2][_load_y - YSTART][0]);\
-		vload(row##_p1, BV[3][_load_y - YSTART][0]);\
-		vload(row##_p2, BV[4][_load_y - YSTART][0]);\
+		vload(row##_c, BV[2][_load_y - YSTART][0]);\
+		vload(v_tmp_l, BV[1][_load_y - YSTART][0]);\
+		vload(v_tmp_r, BV[3][_load_y - YSTART][0]);\
+		row##_h1 = _mm256_add_pd(v_tmp_l, v_tmp_r);\
+		vload(v_tmp_l, BV[0][_load_y - YSTART][0]);\
+		vload(v_tmp_r, BV[4][_load_y - YSTART][0]);\
+		row##_h2 = _mm256_add_pd(v_tmp_l, v_tmp_r);\
 	}
 
 #define load_row_direct(row, yy) {\
 		int _load_y = (yy);\
-		vloadset(row##_m2,	B[(t+1)%2][x - 2             ][_load_y],\
-							B[t%2    ][x - 2 + STRIDE    ][_load_y],\
-							B[(t+1)%2][x - 2 + STRIDE * 2][_load_y],\
-							B[t%2    ][x - 2 + STRIDE * 3][_load_y]);\
-		vloadset(row##_m1,	B[(t+1)%2][x - 1             ][_load_y],\
-							B[t%2    ][x - 1 + STRIDE    ][_load_y],\
-							B[(t+1)%2][x - 1 + STRIDE * 2][_load_y],\
-							B[t%2    ][x - 1 + STRIDE * 3][_load_y]);\
-		vloadset(row##_0,	B[(t+1)%2][x                 ][_load_y],\
+		vloadset(row##_c,	B[(t+1)%2][x                 ][_load_y],\
 							B[t%2    ][x     + STRIDE    ][_load_y],\
 							B[(t+1)%2][x     + STRIDE * 2][_load_y],\
 							B[t%2    ][x     + STRIDE * 3][_load_y]);\
-		vloadset(row##_p1,	B[(t+1)%2][x + 1             ][_load_y],\
+		vloadset(v_tmp_l,	B[(t+1)%2][x - 1             ][_load_y],\
+							B[t%2    ][x - 1 + STRIDE    ][_load_y],\
+							B[(t+1)%2][x - 1 + STRIDE * 2][_load_y],\
+							B[t%2    ][x - 1 + STRIDE * 3][_load_y]);\
+		vloadset(v_tmp_r,	B[(t+1)%2][x + 1             ][_load_y],\
 							B[t%2    ][x + 1 + STRIDE    ][_load_y],\
 							B[(t+1)%2][x + 1 + STRIDE * 2][_load_y],\
 							B[t%2    ][x + 1 + STRIDE * 3][_load_y]);\
-		vloadset(row##_p2,	B[(t+1)%2][x + 2             ][_load_y],\
+		row##_h1 = _mm256_add_pd(v_tmp_l, v_tmp_r);\
+		vloadset(v_tmp_l,	B[(t+1)%2][x - 2             ][_load_y],\
+							B[t%2    ][x - 2 + STRIDE    ][_load_y],\
+							B[(t+1)%2][x - 2 + STRIDE * 2][_load_y],\
+							B[t%2    ][x - 2 + STRIDE * 3][_load_y]);\
+		vloadset(v_tmp_r,	B[(t+1)%2][x + 2             ][_load_y],\
 							B[t%2    ][x + 2 + STRIDE    ][_load_y],\
 							B[(t+1)%2][x + 2 + STRIDE * 2][_load_y],\
 							B[t%2    ][x + 2 + STRIDE * 3][_load_y]);\
+		row##_h2 = _mm256_add_pd(v_tmp_l, v_tmp_r);\
 	}
 
 #define load_row_boundary(row, yy) {\
@@ -43,11 +47,9 @@
 	}
 
 #define copy_row(dst, src) {\
-		dst##_m2 = src##_m2;\
-		dst##_m1 = src##_m1;\
-		dst##_0  = src##_0;\
-		dst##_p1 = src##_p1;\
-		dst##_p2 = src##_p2;\
+		dst##_c  = src##_c;\
+		dst##_h1 = src##_h1;\
+		dst##_h2 = src##_h2;\
 	}
 
 #define shift_row_window() {\
@@ -58,31 +60,16 @@
 	}
 
 #define Compute_25p_window(row_m2, row_m1, row_0, row_p1, row_p2) {\
-		v_sum02 = row_m2##_0;\
-		v_sum22 = _mm256_add_pd(row_m2##_m2, row_m2##_p2);\
-		v_sum12 = _mm256_add_pd(row_m2##_m1, row_m2##_p1);\
-		v_0_m1 = row_m1##_0;\
-		v_sum11 = _mm256_add_pd(row_m1##_m1, row_m1##_p1);\
-		v_m2_m1 = row_m1##_m2;\
-		v_p2_m1 = row_m1##_p2;\
-		vout = _mm256_mul_pd(vc00, row_0##_0);\
-		v_sum01 = _mm256_add_pd(row_0##_m1, row_0##_p1);\
-		v_sum01 = _mm256_add_pd(v_sum01, v_0_m1);\
-		v_sum02 = _mm256_add_pd(_mm256_add_pd(row_0##_m2, row_0##_p2), v_sum02);\
-		v_sum01 = _mm256_add_pd(v_sum01, row_p1##_0);\
-		v_sum11 = _mm256_add_pd(v_sum11, row_p1##_m1);\
-		v_sum11 = _mm256_add_pd(v_sum11, row_p1##_p1);\
-		v_m2_p1 = row_p1##_m2;\
-		v_p2_p1 = row_p1##_p2;\
-		v_sum02 = _mm256_add_pd(v_sum02, row_p2##_0);\
-		v_sum22 = _mm256_add_pd(v_sum22, row_p2##_m2);\
-		v_sum22 = _mm256_add_pd(v_sum22, row_p2##_p2);\
-		v_sum12 = _mm256_add_pd(v_sum12, row_p2##_m1);\
-		v_sum12 = _mm256_add_pd(v_sum12, row_p2##_p1);\
-		v_sum12 = _mm256_add_pd(v_sum12, v_m2_m1);\
-		v_sum12 = _mm256_add_pd(v_sum12, v_m2_p1);\
-		v_sum12 = _mm256_add_pd(v_sum12, v_p2_m1);\
-		v_sum12 = _mm256_add_pd(v_sum12, v_p2_p1);\
+		vout = _mm256_mul_pd(vc00, row_0##_c);\
+		v_sum01 = _mm256_add_pd(row_0##_h1, row_m1##_c);\
+		v_sum01 = _mm256_add_pd(v_sum01, row_p1##_c);\
+		v_sum02 = _mm256_add_pd(row_0##_h2, row_m2##_c);\
+		v_sum02 = _mm256_add_pd(v_sum02, row_p2##_c);\
+		v_sum11 = _mm256_add_pd(row_m1##_h1, row_p1##_h1);\
+		v_sum22 = _mm256_add_pd(row_m2##_h2, row_p2##_h2);\
+		v_sum12 = _mm256_add_pd(row_m2##_h1, row_p2##_h1);\
+		v_sum12 = _mm256_add_pd(v_sum12, row_m1##_h2);\
+		v_sum12 = _mm256_add_pd(v_sum12, row_p1##_h2);\
 		vout = _mm256_add_pd(vout, _mm256_mul_pd(vc01, v_sum01));\
 		vout = _mm256_add_pd(vout, _mm256_mul_pd(vc02, v_sum02));\
 		vout = _mm256_add_pd(vout, _mm256_mul_pd(vc11, v_sum11));\
@@ -146,13 +133,13 @@ void vectime(double* A, int NX, int NY, int T) {
 	int last_transposed_y = YSTART - 1;
 
 	vec v_center_0, v_center_1, v_center_2, v_center_3;
-	vec row0_m2, row0_m1, row0_0, row0_p1, row0_p2;
-	vec row1_m2, row1_m1, row1_0, row1_p1, row1_p2;
-	vec row2_m2, row2_m1, row2_0, row2_p1, row2_p2;
-	vec row3_m2, row3_m1, row3_0, row3_p1, row3_p2;
-	vec row4_m2, row4_m1, row4_0, row4_p1, row4_p2;
+	vec row0_c, row0_h1, row0_h2;
+	vec row1_c, row1_h1, row1_h2;
+	vec row2_c, row2_h1, row2_h2;
+	vec row3_c, row3_h1, row3_h2;
+	vec row4_c, row4_h1, row4_h2;
 	vec v_sum01, v_sum02, v_sum11, v_sum22, v_sum12;
-	vec v_0_m1, v_m2_m1, v_p2_m1, v_m2_p1, v_p2_p1;
+	vec v_tmp_l, v_tmp_r;
 	vec in, out, vout;
 	SET_COFF;
 

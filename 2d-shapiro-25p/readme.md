@@ -27,13 +27,24 @@ y 低边界 chunk 使用 boundary loader。
 y 主路径所有 stencil 行都在 BV 内，使用无分支 BV loader。
 y 高边界和 y tail 使用 boundary/direct 路径。
 
-25p 计算现在按 y 方向复用寄存器窗口。
+25p 计算现在按 y 方向复用 feature row 窗口。
+一个 raw row 原本有 5 个向量：
+m2, m1, c, p1, p2。
+现在加载时先聚合成 3 个特征：
+c  = x
+h1 = x - 1 + x + 1
+h2 = x - 2 + x + 2
+
 一个 y chunk 先装入 5 行 row0..row4。
 计算完一个 yy 后，row0..row4 左移一行，只加载下一行。
-这样 4 个连续 yy 需要加载 y - 2 到 y + 5 共 8 行，而不是每个 yy 重新加载 5 行。
+这样 4 个连续 yy 需要加载 y - 2 到 y + 5 共 8 行。
+每行只保留 c/h1/h2，所以窗口从 25 个 vec 降到 15 个 vec。
 
 当前没有 BV_ACC，也没有把 partial sum 写回内存。
 取消了旧版 pending 队列，新右 slice 直接写入 BV5。
 
-当前目标是借鉴 3d27p 的 BV 窗口轮转方式，并保证 Correct!。
+当前目标是借鉴 3d27p 的 BV 窗口轮转方式，并尝试降低寄存器压力。
+feature row 会改变部分加法结合顺序。
+main.c 的 checkresult 参考 3d27p 改成了相对误差容差判断。
+Makefile 打开了 FMA 编译路径。
 性能还需要继续观察和微调。
