@@ -1,20 +1,14 @@
 #include "define.h"
 
-/* 从 BV extra array 读取一个 32 字节对齐的时间向量。 */
-#define load_bv_aligned(a,b) a=_mm256_load_pd((&b))
-
-/* 向 BV extra array 写入一个 32 字节对齐的时间向量。 */
-#define store_bv_aligned(a,b) _mm256_store_pd((&a),b)
-
 /* 从 BV0..BV4 读取一个 y 行，并提前合成 c/h1/h2 三个 feature。 */
 #define load_feature_row_from_bv(row, yy) {\
 		int _bv_y = (yy);\
-		load_bv_aligned(row##_c, BV2[_bv_y - YSTART][0]);\
-		load_bv_aligned(v_left_tmp, BV1[_bv_y - YSTART][0]);\
-		load_bv_aligned(v_right_tmp, BV3[_bv_y - YSTART][0]);\
+		row##_c = _mm256_load_pd(&BV2[_bv_y - YSTART][0]);\
+		v_left_tmp = _mm256_load_pd(&BV1[_bv_y - YSTART][0]);\
+		v_right_tmp = _mm256_load_pd(&BV3[_bv_y - YSTART][0]);\
 		row##_h1 = _mm256_add_pd(v_left_tmp, v_right_tmp);\
-		load_bv_aligned(v_left_tmp, BV0[_bv_y - YSTART][0]);\
-		load_bv_aligned(v_right_tmp, BV4[_bv_y - YSTART][0]);\
+		v_left_tmp = _mm256_load_pd(&BV0[_bv_y - YSTART][0]);\
+		v_right_tmp = _mm256_load_pd(&BV4[_bv_y - YSTART][0]);\
 		row##_h2 = _mm256_add_pd(v_left_tmp, v_right_tmp);\
 	}
 
@@ -63,20 +57,20 @@
 			vload(v_center_2, B[t%2    ][(x_pos) + STRIDE   ][y]);\
 			vload(v_center_3, B[(t+1)%2][(x_pos)            ][y]);\
 			transpose(v_center_0, v_center_1, v_center_2, v_center_3, in, out);\
-			store_bv_aligned(BVX[(y - YSTART) + 3][0], v_center_3);\
-			store_bv_aligned(BVX[(y - YSTART) + 2][0], v_center_2);\
-			store_bv_aligned(BVX[(y - YSTART) + 1][0], v_center_1);\
-			store_bv_aligned(BVX[(y - YSTART)    ][0], v_center_0);\
+			_mm256_store_pd(&BVX[(y - YSTART) + 3][0], v_center_3);\
+			_mm256_store_pd(&BVX[(y - YSTART) + 2][0], v_center_2);\
+			_mm256_store_pd(&BVX[(y - YSTART) + 1][0], v_center_1);\
+			_mm256_store_pd(&BVX[(y - YSTART)    ][0], v_center_0);\
 		}\
 	}
 
 /* 把一个 BV slice 中的时间向量反转置回普通 B 布局。 */
 #define unpack_bv_column_to_b(BVX, x_pos) {\
 		for ( y = YSTART; y <= NY + YSTART - VECLEN; y += VECLEN) {\
-			load_bv_aligned(v_center_3, BVX[(y - YSTART) + 3][0]);\
-			load_bv_aligned(v_center_2, BVX[(y - YSTART) + 2][0]);\
-			load_bv_aligned(v_center_1, BVX[(y - YSTART) + 1][0]);\
-			load_bv_aligned(v_center_0, BVX[(y - YSTART)    ][0]);\
+			v_center_3 = _mm256_load_pd(&BVX[(y - YSTART) + 3][0]);\
+			v_center_2 = _mm256_load_pd(&BVX[(y - YSTART) + 2][0]);\
+			v_center_1 = _mm256_load_pd(&BVX[(y - YSTART) + 1][0]);\
+			v_center_0 = _mm256_load_pd(&BVX[(y - YSTART)    ][0]);\
 			transpose(v_center_0, v_center_1, v_center_2, v_center_3, in, out);\
 			vstore(B[t%2    ][(x_pos) + STRIDE *3][y], v_center_0);\
 			vstore(B[(t+1)%2][(x_pos) + STRIDE *2][y], v_center_1);\
@@ -119,19 +113,19 @@
 		load_feature_row(row_slot4, _chunk_y + 2);\
 		compute_25p_feature_window(row_slot0, row_slot1, row_slot2, row_slot3, row_slot4);\
 		Input_Output_1(out, v_result, in);\
-		store_bv_aligned(BV5[_chunk_y - YSTART][0], v_result);\
+		_mm256_store_pd(&BV5[_chunk_y - YSTART][0], v_result);\
 		load_feature_row(row_slot0, _chunk_y + 3);\
 		compute_25p_feature_window(row_slot1, row_slot2, row_slot3, row_slot4, row_slot0);\
 		Input_Output_2(out, v_result, in);\
-		store_bv_aligned(BV5[_chunk_y - YSTART + 1][0], v_result);\
+		_mm256_store_pd(&BV5[_chunk_y - YSTART + 1][0], v_result);\
 		load_feature_row(row_slot1, _chunk_y + 4);\
 		compute_25p_feature_window(row_slot2, row_slot3, row_slot4, row_slot0, row_slot1);\
 		Input_Output_3(out, v_result, in);\
-		store_bv_aligned(BV5[_chunk_y - YSTART + 2][0], v_result);\
+		_mm256_store_pd(&BV5[_chunk_y - YSTART + 2][0], v_result);\
 		load_feature_row(row_slot2, _chunk_y + 5);\
 		compute_25p_feature_window(row_slot3, row_slot4, row_slot0, row_slot1, row_slot2);\
 		Input_Output_4(out, v_result, in);\
-		store_bv_aligned(BV5[_chunk_y - YSTART + 3][0], v_result);\
+		_mm256_store_pd(&BV5[_chunk_y - YSTART + 3][0], v_result);\
 	}
 
 void vectime(double* A, int NX, int NY, int T) {
@@ -301,5 +295,3 @@ void vectime(double* A, int NX, int NY, int T) {
 #undef load_feature_row_boundary
 #undef load_feature_row_direct
 #undef load_feature_row_from_bv
-#undef store_bv_aligned
-#undef load_bv_aligned
