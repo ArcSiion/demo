@@ -1,68 +1,5 @@
 #include "define.h"
 
-/* 从 BV0..BV4 读取一个 y 行，并提前合成 c/h1/h2 三个 feature。 */
-#define load_feature_row_from_bv(row, yy) {\
-		int y0 = (yy);\
-		vload(row##_c, BV2[y0 - YSTART][0]);\
-		vload(v_left_tmp, BV1[y0 - YSTART][0]);\
-		vload(v_right_tmp, BV3[y0 - YSTART][0]);\
-		row##_h1 = _mm256_add_pd(v_left_tmp, v_right_tmp);\
-		vload(v_left_tmp, BV0[y0 - YSTART][0]);\
-		vload(v_right_tmp, BV4[y0 - YSTART][0]);\
-		row##_h2 = _mm256_add_pd(v_left_tmp, v_right_tmp);\
-	}
-
-/* 从普通 B 数组直接 gather 一个 y 行，供 y 边界和 y tail 使用。 */
-#define load_feature_row_direct(row, yy) {\
-		int y0 = (yy);\
-		vloadset(row##_c,	B[(t+1)%2][x                 ][y0],\
-							B[t%2    ][x     + STRIDE    ][y0],\
-							B[(t+1)%2][x     + STRIDE * 2][y0],\
-							B[t%2    ][x     + STRIDE * 3][y0]);\
-		vloadset(v_left_tmp,	B[(t+1)%2][x - 1             ][y0],\
-							B[t%2    ][x - 1 + STRIDE    ][y0],\
-							B[(t+1)%2][x - 1 + STRIDE * 2][y0],\
-							B[t%2    ][x - 1 + STRIDE * 3][y0]);\
-		vloadset(v_right_tmp,	B[(t+1)%2][x + 1             ][y0],\
-							B[t%2    ][x + 1 + STRIDE    ][y0],\
-							B[(t+1)%2][x + 1 + STRIDE * 2][y0],\
-							B[t%2    ][x + 1 + STRIDE * 3][y0]);\
-		row##_h1 = _mm256_add_pd(v_left_tmp, v_right_tmp);\
-		vloadset(v_left_tmp,	B[(t+1)%2][x - 2             ][y0],\
-							B[t%2    ][x - 2 + STRIDE    ][y0],\
-							B[(t+1)%2][x - 2 + STRIDE * 2][y0],\
-							B[t%2    ][x - 2 + STRIDE * 3][y0]);\
-		vloadset(v_right_tmp,	B[(t+1)%2][x + 2             ][y0],\
-							B[t%2    ][x + 2 + STRIDE    ][y0],\
-							B[(t+1)%2][x + 2 + STRIDE * 2][y0],\
-							B[t%2    ][x + 2 + STRIDE * 3][y0]);\
-		row##_h2 = _mm256_add_pd(v_left_tmp, v_right_tmp);\
-	}
-
-/* 使用 5 个 feature row 计算一个 25p 输出时间向量。 */
-#define compute_25p_feature_window(row_m2, row_m1, row_0, row_p1, row_p2) {\
-		/* C00: 中心点。 */\
-		v_result = _mm256_mul_pd(vc00, row_0##_c);\
-		/* C01: y=0 的横向一阶邻居 + x 中心列的 y 一阶邻居。 */\
-		v_c01_sum = _mm256_add_pd(row_0##_h1, row_m1##_c);\
-		v_c01_sum = _mm256_add_pd(v_c01_sum, row_p1##_c);\
-		v_result = _mm256_fmadd_pd(vc01, v_c01_sum, v_result);\
-		/* C02: y=0 的横向二阶邻居 + x 中心列的 y 二阶邻居。 */\
-		v_c02_sum = _mm256_add_pd(row_0##_h2, row_m2##_c);\
-		v_c02_sum = _mm256_add_pd(v_c02_sum, row_p2##_c);\
-		v_result = _mm256_fmadd_pd(vc02, v_c02_sum, v_result);\
-		/* C11/C22: 四个对角点按 feature row 直接相加。 */\
-		v_c11_sum = _mm256_add_pd(row_m1##_h1, row_p1##_h1);\
-		v_result = _mm256_fmadd_pd(vc11, v_c11_sum, v_result);\
-		v_c22_sum = _mm256_add_pd(row_m2##_h2, row_p2##_h2);\
-		v_result = _mm256_fmadd_pd(vc22, v_c22_sum, v_result);\
-		/* C12: 一阶 x + 二阶 y，以及二阶 x + 一阶 y 的混合项。 */\
-		v_c12_sum = _mm256_add_pd(row_m2##_h1, row_p2##_h1);\
-		v_pair_tmp = _mm256_add_pd(row_m1##_h2, row_p1##_h2);\
-		v_c12_sum = _mm256_add_pd(v_c12_sum, v_pair_tmp);\
-		v_result = _mm256_fmadd_pd(vc12, v_c12_sum, v_result);\
-	}
-
 void vectime(double* A, int NX, int NY, int T) {
 	
 	double (* B)[NX + 2 * XSTART][NY + 2 * YSTART] =
@@ -85,7 +22,7 @@ void vectime(double* A, int NX, int NY, int T) {
 	vec in, out, v_result;
 	SET_COFF;
 
-	/* 当前版本假设 NX/NY 足够进入 temporal-vector 主体。 */
+	// 当前版本假设 NX/NY 足够进入 temporal-vector 主体。
 	double (* BV_buffer)[bv_y_rows][VECLEN] =
 		(double (*)[bv_y_rows][VECLEN])alloc_extra_array(
 			sizeof(double) * bv_y_rows * VECLEN * 6);
@@ -101,7 +38,7 @@ void vectime(double* A, int NX, int NY, int T) {
 
 	for ( tt = 0; tt <= T - VECLEN; tt += VECLEN) {
 
-		/* 时间 tile 左侧依赖区仍用 scalar 预热。 */
+		// 时间 tile 左侧依赖区仍用 scalar 预热。
 		for ( t = tt; t < tt + VECLEN - 1; t++) {
 			for ( x = XSTART; x < XSTART + STRIDE * (VECLEN - 1 - (t - tt)); x++) {
 				#pragma ivdep
@@ -122,7 +59,7 @@ void vectime(double* A, int NX, int NY, int T) {
 		BV4 = (double (*) [VECLEN]) (BV_buffer + 4);
 		BV5 = (double (*) [VECLEN]) (BV_buffer + 5);
 
-		/* 初始 5 个输入 slice 打包到 extra array：BV0..BV4 对应 x-2..x+2。 */
+		// 初始 5 个输入 slice 打包到 extra array：BV0..BV4 对应 x-2..x+2。
 		{
 			double (*BV_pack[5])[VECLEN] = {BV0, BV1, BV2, BV3, BV4};
 
@@ -151,7 +88,7 @@ void vectime(double* A, int NX, int NY, int T) {
 		for ( x = XSTART; x <= last_vector_x; x++) {
 			y = YSTART;
 
-			/* y 低边界 chunk：显式 boundary loader，避免主路径分支。 */
+			// y 低边界 chunk：显式 boundary loader，避免主路径分支。
 			if (y <= last_full_chunk_y) {
 				in = _mm256_loadu_pd(&B[t%2][x + STRIDE * VECLEN][y]);
 				load_feature_row_direct(row_slot0, y - 2);
@@ -186,9 +123,9 @@ void vectime(double* A, int NX, int NY, int T) {
 				y += VECLEN;
 			}
 
-			/* y 主路径：所有 stencil 行都在 BV 中，只走无分支 BV loader，并复用 5 行寄存器窗口。 */
+			// y 主路径：所有 stencil 行都在 BV 中，只走无分支 BV loader，并复用 5 行寄存器窗口。
 			for ( ; y + VECLEN - 1 + YSLOPE <= last_packed_y; y += VECLEN) {
-				/* in 是下一轮 x 迭代需要拼入 Input_Output 的右侧时间向量。 */
+				// in 是下一轮 x 迭代需要拼入 Input_Output 的右侧时间向量。
 				in = _mm256_loadu_pd(&B[t%2][x + STRIDE * VECLEN][y]);
 				load_feature_row_from_bv(row_slot0, y - 2);
 				load_feature_row_from_bv(row_slot1, y - 1);
@@ -221,7 +158,7 @@ void vectime(double* A, int NX, int NY, int T) {
 				_mm256_storeu_pd(&B[t%2][x][y], out);
 			}
 
-			/* y 高边界 chunk：只处理剩余完整向量块。 */
+			// y 高边界 chunk：只处理剩余完整向量块。
 			for ( ; y <= last_full_chunk_y; y += VECLEN) {
 				in = _mm256_loadu_pd(&B[t%2][x + STRIDE * VECLEN][y]);
 				load_feature_row_from_bv(row_slot0, y - 2);
@@ -255,7 +192,7 @@ void vectime(double* A, int NX, int NY, int T) {
 				_mm256_storeu_pd(&B[t%2][x][y], out);
 			}
 
-			/* y 尾部不进入 BV 输出 slice，继续 direct gather/scatter。 */
+			// y 尾部不进入 BV 输出 slice，继续 direct gather/scatter。
 			for ( y = last_packed_y + 1; y < NY + YSTART; y++) {
 				if (y - 2 <= last_packed_y) {
 					load_feature_row_from_bv(row_slot0, y - 2);
@@ -284,7 +221,7 @@ void vectime(double* A, int NX, int NY, int T) {
 				B[t%2    ][x             ][y] = lane_tmp[3];
 			}
 
-			/* BV0 是当前窗口最左列；本轮输出写在 BV5，轮转后成为新的最右列。 */
+			// BV0 是当前窗口最左列；本轮输出写在 BV5，轮转后成为新的最右列。
 			BV_rotate_tmp = BV0;
 			BV0 = BV1;
 			BV1 = BV2;
@@ -296,7 +233,7 @@ void vectime(double* A, int NX, int NY, int T) {
 
 		xx = x;
 
-		/* x 主体结束后，把最后 5 个输入 slice 转回普通 B 布局。 */
+		// x 主体结束后，把最后 5 个输入 slice 转回普通 B 布局。
 		{
 			double (*BV_unpack[5])[VECLEN] = {BV0, BV1, BV2, BV3, BV4};
 
@@ -322,7 +259,7 @@ void vectime(double* A, int NX, int NY, int T) {
 			}
 		}
 
-		/* 时间 tile 右侧依赖区回到 scalar 收尾。 */
+		// 时间 tile 右侧依赖区回到 scalar 收尾。
 		for ( t = tt; t < tt + VECLEN; t++) {
 			for ( x = xx + STRIDE * (VECLEN - 1 - (t - tt)); x < NX + XSTART; x++) {
 				#pragma ivdep
@@ -333,7 +270,7 @@ void vectime(double* A, int NX, int NY, int T) {
 			}
 		}
 
-		/* extra array 不再改写左 halo，这里保留恢复动作，避免后续 tile 读到旧时间层差异。 */
+		// extra array 不再改写左 halo，这里保留恢复动作，避免后续 tile 读到旧时间层差异。
 		for ( x = XSTART - XSLOPE; x < XSTART; x++) {
 			for ( y = 0; y < NY + YSTART * 2; y++) {
 				B[1][x][y] = B[0][x][y];
@@ -341,7 +278,7 @@ void vectime(double* A, int NX, int NY, int T) {
 		}
 	}
 
-	/* T 不能被 VECLEN 整除时，剩余时间步用 scalar 完成。 */
+	// T 不能被 VECLEN 整除时，剩余时间步用 scalar 完成。
 	for ( ; t < T; t++) {
 		for ( x = XSTART; x < NX + XSTART; x++) {
 			#pragma ivdep
@@ -354,7 +291,3 @@ void vectime(double* A, int NX, int NY, int T) {
 
 	free_extra_array(BV_buffer);
 }
-
-#undef compute_25p_feature_window
-#undef load_feature_row_direct
-#undef load_feature_row_from_bv

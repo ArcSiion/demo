@@ -35,6 +35,70 @@
 				   __m256d vc22 = _mm256_set1_pd(C22);\
 				   __m256d vc12 = _mm256_set1_pd(C12)
 
+//=====================================
+
+// 从 BV0..BV4 读取一个 y 行，并提前合成 c/h1/h2 三个 feature。
+#define load_feature_row_from_bv(row, yy) {\
+		int y0 = (yy);\
+		vload(row##_c, BV2[y0 - YSTART][0]);\
+		vload(v_left_tmp, BV1[y0 - YSTART][0]);\
+		vload(v_right_tmp, BV3[y0 - YSTART][0]);\
+		row##_h1 = _mm256_add_pd(v_left_tmp, v_right_tmp);\
+		vload(v_left_tmp, BV0[y0 - YSTART][0]);\
+		vload(v_right_tmp, BV4[y0 - YSTART][0]);\
+		row##_h2 = _mm256_add_pd(v_left_tmp, v_right_tmp);\
+	}
+
+// 从普通 B 数组直接 gather 一个 y 行，供 y 边界和 y tail 使用。
+#define load_feature_row_direct(row, yy) {\
+		int y0 = (yy);\
+		vloadset(row##_c,	B[(t+1)%2][x                 ][y0],\
+							B[t%2    ][x     + STRIDE    ][y0],\
+							B[(t+1)%2][x     + STRIDE * 2][y0],\
+							B[t%2    ][x     + STRIDE * 3][y0]);\
+		vloadset(v_left_tmp,	B[(t+1)%2][x - 1             ][y0],\
+							B[t%2    ][x - 1 + STRIDE    ][y0],\
+							B[(t+1)%2][x - 1 + STRIDE * 2][y0],\
+							B[t%2    ][x - 1 + STRIDE * 3][y0]);\
+		vloadset(v_right_tmp,	B[(t+1)%2][x + 1             ][y0],\
+							B[t%2    ][x + 1 + STRIDE    ][y0],\
+							B[(t+1)%2][x + 1 + STRIDE * 2][y0],\
+							B[t%2    ][x + 1 + STRIDE * 3][y0]);\
+		row##_h1 = _mm256_add_pd(v_left_tmp, v_right_tmp);\
+		vloadset(v_left_tmp,	B[(t+1)%2][x - 2             ][y0],\
+							B[t%2    ][x - 2 + STRIDE    ][y0],\
+							B[(t+1)%2][x - 2 + STRIDE * 2][y0],\
+							B[t%2    ][x - 2 + STRIDE * 3][y0]);\
+		vloadset(v_right_tmp,	B[(t+1)%2][x + 2             ][y0],\
+							B[t%2    ][x + 2 + STRIDE    ][y0],\
+							B[(t+1)%2][x + 2 + STRIDE * 2][y0],\
+							B[t%2    ][x + 2 + STRIDE * 3][y0]);\
+		row##_h2 = _mm256_add_pd(v_left_tmp, v_right_tmp);\
+	}
+
+// 使用 5 个 feature row 计算一个 25p 输出时间向量。
+// 计算分组顺序为 C00, C01, C02, C11, C22, C12。
+// 宏体内部不能使用 // 注释加反斜杠续行，否则会破坏宏展开。
+#define compute_25p_feature_window(row_m2, row_m1, row_0, row_p1, row_p2) {\
+		v_result = _mm256_mul_pd(vc00, row_0##_c);\
+		v_c01_sum = _mm256_add_pd(row_0##_h1, row_m1##_c);\
+		v_c01_sum = _mm256_add_pd(v_c01_sum, row_p1##_c);\
+		v_result = _mm256_fmadd_pd(vc01, v_c01_sum, v_result);\
+		v_c02_sum = _mm256_add_pd(row_0##_h2, row_m2##_c);\
+		v_c02_sum = _mm256_add_pd(v_c02_sum, row_p2##_c);\
+		v_result = _mm256_fmadd_pd(vc02, v_c02_sum, v_result);\
+		v_c11_sum = _mm256_add_pd(row_m1##_h1, row_p1##_h1);\
+		v_result = _mm256_fmadd_pd(vc11, v_c11_sum, v_result);\
+		v_c22_sum = _mm256_add_pd(row_m2##_h2, row_p2##_h2);\
+		v_result = _mm256_fmadd_pd(vc22, v_c22_sum, v_result);\
+		v_c12_sum = _mm256_add_pd(row_m2##_h1, row_p2##_h1);\
+		v_pair_tmp = _mm256_add_pd(row_m1##_h2, row_p1##_h2);\
+		v_c12_sum = _mm256_add_pd(v_c12_sum, v_pair_tmp);\
+		v_result = _mm256_fmadd_pd(vc12, v_c12_sum, v_result);\
+	}
+
+//=====================================================
+
 #define Compute_1vector(v_m2_m2, v_m1_m2, v_0_m2, v_p1_m2, v_p2_m2,\
 						v_m2_m1, v_m1_m1, v_0_m1, v_p1_m1, v_p2_m1,\
 						v_m2_0,  v_m1_0,  v_0_0,  v_p1_0,  v_p2_0,\

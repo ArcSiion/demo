@@ -13,11 +13,11 @@
 	printf(#func", NX = %d, NY = %d, T = %d, GStencil/s = %f\n", NX, NY, T,\
 			((double) NX * NY * T) / (double)(end.tv_sec - start.tv_sec + (end.tv_usec - start.tv_usec) * 1.0e-6) / 1000000000L)
 
+// run_and_test 用 naive_scalar 生成的 A_correct 检查当前算法结果。
 #define run_and_test(func, A)	init_data(A);\
 	gettimeofday(&start, 0);\
 	func((double *)A, NX, NY, T);\
 	gettimeofday(&end, 0);\
-	/* 用 naive_scalar 生成的 A_correct 检查当前算法结果 */\
 	if(checkresult(NX, NY, ( double (* )[ NY+2*YSTART])&A_correct[T % 2][0][0], ( double (* )[ NY+2*YSTART])&A[T % 2][0][0])) printf("Correct!\t");\
 	printf(#func", NX = %d, NY = %d, T = %d, GStencil/s = %f\n", NX, NY, T,\
 			((double) NX * NY * T) / (double)(end.tv_sec - start.tv_sec + (end.tv_usec - start.tv_usec) * 1.0e-6) / 1000000000L)
@@ -65,7 +65,7 @@ int checkresult( int NX, int NY, double (* A_correct)[ NY+2*YSTART], double (* A
 	for (x= XSTART; x < NX + XSTART; x++) {
 		for (y = YSTART; y < NY + YSTART; y++) {
 
-			/* 参考 3d27p：允许浮点重排/FMA 带来的舍入级差异。 */
+			// 参考 3d27p：允许浮点重排/FMA 带来的舍入级差异。
 			if (fabs(A[x][y] - A_correct[x][y]) > 1e-12 * fmax(1.0, fmax(fabs(A[x][y]), fabs(A_correct[x][y])))) {
 				printf("x = [%d], y = [%d], Correct = %f, Wrong = %f\n", x, y, A_correct[x][y], A[x][y]);
 				correct = 0;
