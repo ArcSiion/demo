@@ -1,5 +1,10 @@
 #include "../common.h"
 
+#undef vload
+#undef vstore
+#define vload(a,b) a=_mm256_load_pd((&b))
+#define vstore(a,b) _mm256_store_pd((&a),b)
+
 #define RADIUS 2
 #define STRIDE 3
 
