@@ -2,80 +2,49 @@
 
 /* 从 BV0..BV4 读取一个 y 行，并提前合成 c/h1/h2 三个 feature。 */
 #define load_feature_row_from_bv(row, yy) {\
-		int _bv_y = (yy);\
-		row##_c = _mm256_load_pd(&BV2[_bv_y - YSTART][0]);\
-		v_left_tmp = _mm256_load_pd(&BV1[_bv_y - YSTART][0]);\
-		v_right_tmp = _mm256_load_pd(&BV3[_bv_y - YSTART][0]);\
+		int y0 = (yy);\
+		row##_c = _mm256_load_pd(&BV2[y0 - YSTART][0]);\
+		v_left_tmp = _mm256_load_pd(&BV1[y0 - YSTART][0]);\
+		v_right_tmp = _mm256_load_pd(&BV3[y0 - YSTART][0]);\
 		row##_h1 = _mm256_add_pd(v_left_tmp, v_right_tmp);\
-		v_left_tmp = _mm256_load_pd(&BV0[_bv_y - YSTART][0]);\
-		v_right_tmp = _mm256_load_pd(&BV4[_bv_y - YSTART][0]);\
+		v_left_tmp = _mm256_load_pd(&BV0[y0 - YSTART][0]);\
+		v_right_tmp = _mm256_load_pd(&BV4[y0 - YSTART][0]);\
 		row##_h2 = _mm256_add_pd(v_left_tmp, v_right_tmp);\
 	}
 
 /* 从普通 B 数组直接 gather 一个 y 行，供 y 边界和 y tail 使用。 */
 #define load_feature_row_direct(row, yy) {\
-		int _direct_y = (yy);\
-		vloadset(row##_c,	B[(t+1)%2][x                 ][_direct_y],\
-							B[t%2    ][x     + STRIDE    ][_direct_y],\
-							B[(t+1)%2][x     + STRIDE * 2][_direct_y],\
-							B[t%2    ][x     + STRIDE * 3][_direct_y]);\
-		vloadset(v_left_tmp,	B[(t+1)%2][x - 1             ][_direct_y],\
-							B[t%2    ][x - 1 + STRIDE    ][_direct_y],\
-							B[(t+1)%2][x - 1 + STRIDE * 2][_direct_y],\
-							B[t%2    ][x - 1 + STRIDE * 3][_direct_y]);\
-		vloadset(v_right_tmp,	B[(t+1)%2][x + 1             ][_direct_y],\
-							B[t%2    ][x + 1 + STRIDE    ][_direct_y],\
-							B[(t+1)%2][x + 1 + STRIDE * 2][_direct_y],\
-							B[t%2    ][x + 1 + STRIDE * 3][_direct_y]);\
+		int y0 = (yy);\
+		vloadset(row##_c,	B[(t+1)%2][x                 ][y0],\
+							B[t%2    ][x     + STRIDE    ][y0],\
+							B[(t+1)%2][x     + STRIDE * 2][y0],\
+							B[t%2    ][x     + STRIDE * 3][y0]);\
+		vloadset(v_left_tmp,	B[(t+1)%2][x - 1             ][y0],\
+							B[t%2    ][x - 1 + STRIDE    ][y0],\
+							B[(t+1)%2][x - 1 + STRIDE * 2][y0],\
+							B[t%2    ][x - 1 + STRIDE * 3][y0]);\
+		vloadset(v_right_tmp,	B[(t+1)%2][x + 1             ][y0],\
+							B[t%2    ][x + 1 + STRIDE    ][y0],\
+							B[(t+1)%2][x + 1 + STRIDE * 2][y0],\
+							B[t%2    ][x + 1 + STRIDE * 3][y0]);\
 		row##_h1 = _mm256_add_pd(v_left_tmp, v_right_tmp);\
-		vloadset(v_left_tmp,	B[(t+1)%2][x - 2             ][_direct_y],\
-							B[t%2    ][x - 2 + STRIDE    ][_direct_y],\
-							B[(t+1)%2][x - 2 + STRIDE * 2][_direct_y],\
-							B[t%2    ][x - 2 + STRIDE * 3][_direct_y]);\
-		vloadset(v_right_tmp,	B[(t+1)%2][x + 2             ][_direct_y],\
-							B[t%2    ][x + 2 + STRIDE    ][_direct_y],\
-							B[(t+1)%2][x + 2 + STRIDE * 2][_direct_y],\
-							B[t%2    ][x + 2 + STRIDE * 3][_direct_y]);\
+		vloadset(v_left_tmp,	B[(t+1)%2][x - 2             ][y0],\
+							B[t%2    ][x - 2 + STRIDE    ][y0],\
+							B[(t+1)%2][x - 2 + STRIDE * 2][y0],\
+							B[t%2    ][x - 2 + STRIDE * 3][y0]);\
+		vloadset(v_right_tmp,	B[(t+1)%2][x + 2             ][y0],\
+							B[t%2    ][x + 2 + STRIDE    ][y0],\
+							B[(t+1)%2][x + 2 + STRIDE * 2][y0],\
+							B[t%2    ][x + 2 + STRIDE * 3][y0]);\
 		row##_h2 = _mm256_add_pd(v_left_tmp, v_right_tmp);\
 	}
 
 /* 根据 y 是否已经打包到 BV，在 BV loader 和 direct loader 之间选择。 */
 #define load_feature_row_boundary(row, yy) {\
-		int _boundary_y = (yy);\
-		if (_boundary_y >= YSTART && _boundary_y <= last_packed_y) {\
-			load_feature_row_from_bv(row, _boundary_y);\
+		if ((yy) >= YSTART && (yy) <= last_packed_y) {\
+			load_feature_row_from_bv(row, yy);\
 		} else {\
-			load_feature_row_direct(row, _boundary_y);\
-		}\
-	}
-
-/* 把一个 x 列从普通 B 布局转置成时间向量，并写入指定 BV slice。 */
-#define pack_b_column_to_bv(BVX, x_pos) {\
-		for ( y = YSTART; y <= NY + YSTART - VECLEN; y += VECLEN) {\
-			vload(v_center_0, B[t%2    ][(x_pos) + STRIDE *3][y]);\
-			vload(v_center_1, B[(t+1)%2][(x_pos) + STRIDE *2][y]);\
-			vload(v_center_2, B[t%2    ][(x_pos) + STRIDE   ][y]);\
-			vload(v_center_3, B[(t+1)%2][(x_pos)            ][y]);\
-			transpose(v_center_0, v_center_1, v_center_2, v_center_3, in, out);\
-			_mm256_store_pd(&BVX[(y - YSTART) + 3][0], v_center_3);\
-			_mm256_store_pd(&BVX[(y - YSTART) + 2][0], v_center_2);\
-			_mm256_store_pd(&BVX[(y - YSTART) + 1][0], v_center_1);\
-			_mm256_store_pd(&BVX[(y - YSTART)    ][0], v_center_0);\
-		}\
-	}
-
-/* 把一个 BV slice 中的时间向量反转置回普通 B 布局。 */
-#define unpack_bv_column_to_b(BVX, x_pos) {\
-		for ( y = YSTART; y <= NY + YSTART - VECLEN; y += VECLEN) {\
-			v_center_3 = _mm256_load_pd(&BVX[(y - YSTART) + 3][0]);\
-			v_center_2 = _mm256_load_pd(&BVX[(y - YSTART) + 2][0]);\
-			v_center_1 = _mm256_load_pd(&BVX[(y - YSTART) + 1][0]);\
-			v_center_0 = _mm256_load_pd(&BVX[(y - YSTART)    ][0]);\
-			transpose(v_center_0, v_center_1, v_center_2, v_center_3, in, out);\
-			vstore(B[t%2    ][(x_pos) + STRIDE *3][y], v_center_0);\
-			vstore(B[(t+1)%2][(x_pos) + STRIDE *2][y], v_center_1);\
-			vstore(B[t%2    ][(x_pos) + STRIDE   ][y], v_center_2);\
-			vstore(B[(t+1)%2][(x_pos)            ][y], v_center_3);\
+			load_feature_row_direct(row, yy);\
 		}\
 	}
 
@@ -103,34 +72,10 @@
 		v_result = _mm256_fmadd_pd(vc12, v_c12_sum, v_result);\
 	}
 
-/* 计算连续 4 个 y 输出；row_slot0..4 环形复用，避免整行窗口平移拷贝。 */
-#define compute_25p_y_chunk(load_feature_row, yy) {\
-		int _chunk_y = (yy);\
-		load_feature_row(row_slot0, _chunk_y - 2);\
-		load_feature_row(row_slot1, _chunk_y - 1);\
-		load_feature_row(row_slot2, _chunk_y    );\
-		load_feature_row(row_slot3, _chunk_y + 1);\
-		load_feature_row(row_slot4, _chunk_y + 2);\
-		compute_25p_feature_window(row_slot0, row_slot1, row_slot2, row_slot3, row_slot4);\
-		Input_Output_1(out, v_result, in);\
-		_mm256_store_pd(&BV5[_chunk_y - YSTART][0], v_result);\
-		load_feature_row(row_slot0, _chunk_y + 3);\
-		compute_25p_feature_window(row_slot1, row_slot2, row_slot3, row_slot4, row_slot0);\
-		Input_Output_2(out, v_result, in);\
-		_mm256_store_pd(&BV5[_chunk_y - YSTART + 1][0], v_result);\
-		load_feature_row(row_slot1, _chunk_y + 4);\
-		compute_25p_feature_window(row_slot2, row_slot3, row_slot4, row_slot0, row_slot1);\
-		Input_Output_3(out, v_result, in);\
-		_mm256_store_pd(&BV5[_chunk_y - YSTART + 2][0], v_result);\
-		load_feature_row(row_slot2, _chunk_y + 5);\
-		compute_25p_feature_window(row_slot3, row_slot4, row_slot0, row_slot1, row_slot2);\
-		Input_Output_4(out, v_result, in);\
-		_mm256_store_pd(&BV5[_chunk_y - YSTART + 3][0], v_result);\
-	}
-
 void vectime(double* A, int NX, int NY, int T) {
 	
-	double (* B)[NX + 2 * XSTART][ NY + 2 * YSTART] =  (double (*)[NX + 2 * XSTART][ NY + 2 * YSTART]) A;
+	double (* B)[NX + 2 * XSTART][NY + 2 * YSTART] =
+		(double (*)[NX + 2 * XSTART][NY + 2 * YSTART]) A;
 	double lane_tmp[VECLEN];
 
 	int tt, t =0, x, xx, y;
@@ -150,7 +95,9 @@ void vectime(double* A, int NX, int NY, int T) {
 	SET_COFF;
 
 	/* 当前版本假设 NX/NY 足够进入 temporal-vector 主体。 */
-	double (* BV_buffer) [bv_y_rows][VECLEN] = (double(*)[bv_y_rows][VECLEN])alloc_extra_array(sizeof(double) * bv_y_rows * VECLEN * 6);
+	double (* BV_buffer)[bv_y_rows][VECLEN] =
+		(double (*)[bv_y_rows][VECLEN])alloc_extra_array(
+			sizeof(double) * bv_y_rows * VECLEN * 6);
 
 	double (* BV0) [VECLEN] = (double (*) [VECLEN]) BV_buffer;
 	double (* BV1) [VECLEN] = (double (*) [VECLEN]) (BV_buffer + 1);
@@ -185,11 +132,30 @@ void vectime(double* A, int NX, int NY, int T) {
 		BV5 = (double (*) [VECLEN]) (BV_buffer + 5);
 
 		/* 初始 5 个输入 slice 打包到 extra array：BV0..BV4 对应 x-2..x+2。 */
-		pack_b_column_to_bv(BV0, XSTART - 2);
-		pack_b_column_to_bv(BV1, XSTART - 1);
-		pack_b_column_to_bv(BV2, XSTART    );
-		pack_b_column_to_bv(BV3, XSTART + 1);
-		pack_b_column_to_bv(BV4, XSTART + 2);
+		{
+			double (*BV_pack[5])[VECLEN] = {BV0, BV1, BV2, BV3, BV4};
+
+			for (int bv_col = 0; bv_col < 5; bv_col++) {
+				int pack_x = XSTART - XSLOPE + bv_col;
+
+				for (y = YSTART; y <= NY + YSTART - VECLEN; y += VECLEN) {
+					vload(v_center_0, B[t%2    ][pack_x + STRIDE * 3][y]);
+					vload(v_center_1, B[(t+1)%2][pack_x + STRIDE * 2][y]);
+					vload(v_center_2, B[t%2    ][pack_x + STRIDE    ][y]);
+					vload(v_center_3, B[(t+1)%2][pack_x             ][y]);
+					transpose(v_center_0, v_center_1,
+							  v_center_2, v_center_3, in, out);
+					_mm256_store_pd(&BV_pack[bv_col][y - YSTART + 3][0],
+									v_center_3);
+					_mm256_store_pd(&BV_pack[bv_col][y - YSTART + 2][0],
+									v_center_2);
+					_mm256_store_pd(&BV_pack[bv_col][y - YSTART + 1][0],
+									v_center_1);
+					_mm256_store_pd(&BV_pack[bv_col][y - YSTART][0],
+									v_center_0);
+				}
+			}
+		}
 
 		for ( x = XSTART; x <= last_vector_x; x++) {
 			y = YSTART;
@@ -197,7 +163,34 @@ void vectime(double* A, int NX, int NY, int T) {
 			/* y 低边界 chunk：显式 boundary loader，避免主路径分支。 */
 			if (y <= last_full_chunk_y) {
 				vload(in, B[t%2][x + STRIDE * VECLEN][y]);
-				compute_25p_y_chunk(load_feature_row_boundary, y);
+				load_feature_row_boundary(row_slot0, y - 2);
+				load_feature_row_boundary(row_slot1, y - 1);
+				load_feature_row_boundary(row_slot2, y    );
+				load_feature_row_boundary(row_slot3, y + 1);
+				load_feature_row_boundary(row_slot4, y + 2);
+
+				compute_25p_feature_window(row_slot0, row_slot1,
+										   row_slot2, row_slot3, row_slot4);
+				Input_Output_1(out, v_result, in);
+				_mm256_store_pd(&BV5[y - YSTART][0], v_result);
+
+				load_feature_row_boundary(row_slot0, y + 3);
+				compute_25p_feature_window(row_slot1, row_slot2,
+										   row_slot3, row_slot4, row_slot0);
+				Input_Output_2(out, v_result, in);
+				_mm256_store_pd(&BV5[y - YSTART + 1][0], v_result);
+
+				load_feature_row_boundary(row_slot1, y + 4);
+				compute_25p_feature_window(row_slot2, row_slot3,
+										   row_slot4, row_slot0, row_slot1);
+				Input_Output_3(out, v_result, in);
+				_mm256_store_pd(&BV5[y - YSTART + 2][0], v_result);
+
+				load_feature_row_boundary(row_slot2, y + 5);
+				compute_25p_feature_window(row_slot3, row_slot4,
+										   row_slot0, row_slot1, row_slot2);
+				Input_Output_4(out, v_result, in);
+				_mm256_store_pd(&BV5[y - YSTART + 3][0], v_result);
 				vstore(B[t%2][x][y], out);
 				y += VECLEN;
 			}
@@ -206,14 +199,68 @@ void vectime(double* A, int NX, int NY, int T) {
 			for ( ; y + VECLEN - 1 + YSLOPE <= last_packed_y; y += VECLEN) {
 				/* in 是下一轮 x 迭代需要拼入 Input_Output 的右侧时间向量。 */
 				vload(in, B[t%2][x + STRIDE * VECLEN][y]);
-				compute_25p_y_chunk(load_feature_row_from_bv, y);
+				load_feature_row_from_bv(row_slot0, y - 2);
+				load_feature_row_from_bv(row_slot1, y - 1);
+				load_feature_row_from_bv(row_slot2, y    );
+				load_feature_row_from_bv(row_slot3, y + 1);
+				load_feature_row_from_bv(row_slot4, y + 2);
+
+				compute_25p_feature_window(row_slot0, row_slot1,
+										   row_slot2, row_slot3, row_slot4);
+				Input_Output_1(out, v_result, in);
+				_mm256_store_pd(&BV5[y - YSTART][0], v_result);
+
+				load_feature_row_from_bv(row_slot0, y + 3);
+				compute_25p_feature_window(row_slot1, row_slot2,
+										   row_slot3, row_slot4, row_slot0);
+				Input_Output_2(out, v_result, in);
+				_mm256_store_pd(&BV5[y - YSTART + 1][0], v_result);
+
+				load_feature_row_from_bv(row_slot1, y + 4);
+				compute_25p_feature_window(row_slot2, row_slot3,
+										   row_slot4, row_slot0, row_slot1);
+				Input_Output_3(out, v_result, in);
+				_mm256_store_pd(&BV5[y - YSTART + 2][0], v_result);
+
+				load_feature_row_from_bv(row_slot2, y + 5);
+				compute_25p_feature_window(row_slot3, row_slot4,
+										   row_slot0, row_slot1, row_slot2);
+				Input_Output_4(out, v_result, in);
+				_mm256_store_pd(&BV5[y - YSTART + 3][0], v_result);
 				vstore(B[t%2][x][y], out);
 			}
 
 			/* y 高边界 chunk：只处理剩余完整向量块。 */
 			for ( ; y <= last_full_chunk_y; y += VECLEN) {
 				vload(in, B[t%2][x + STRIDE * VECLEN][y]);
-				compute_25p_y_chunk(load_feature_row_boundary, y);
+				load_feature_row_boundary(row_slot0, y - 2);
+				load_feature_row_boundary(row_slot1, y - 1);
+				load_feature_row_boundary(row_slot2, y    );
+				load_feature_row_boundary(row_slot3, y + 1);
+				load_feature_row_boundary(row_slot4, y + 2);
+
+				compute_25p_feature_window(row_slot0, row_slot1,
+										   row_slot2, row_slot3, row_slot4);
+				Input_Output_1(out, v_result, in);
+				_mm256_store_pd(&BV5[y - YSTART][0], v_result);
+
+				load_feature_row_boundary(row_slot0, y + 3);
+				compute_25p_feature_window(row_slot1, row_slot2,
+										   row_slot3, row_slot4, row_slot0);
+				Input_Output_2(out, v_result, in);
+				_mm256_store_pd(&BV5[y - YSTART + 1][0], v_result);
+
+				load_feature_row_boundary(row_slot1, y + 4);
+				compute_25p_feature_window(row_slot2, row_slot3,
+										   row_slot4, row_slot0, row_slot1);
+				Input_Output_3(out, v_result, in);
+				_mm256_store_pd(&BV5[y - YSTART + 2][0], v_result);
+
+				load_feature_row_boundary(row_slot2, y + 5);
+				compute_25p_feature_window(row_slot3, row_slot4,
+										   row_slot0, row_slot1, row_slot2);
+				Input_Output_4(out, v_result, in);
+				_mm256_store_pd(&BV5[y - YSTART + 3][0], v_result);
 				vstore(B[t%2][x][y], out);
 			}
 
@@ -248,12 +295,31 @@ void vectime(double* A, int NX, int NY, int T) {
 
 		xx = x;
 
-		/* x 主体结束后，把最后 5 个输入 slice 从 extra array 转回普通 B 布局。 */
-		unpack_bv_column_to_b(BV0, xx - 2);
-		unpack_bv_column_to_b(BV1, xx - 1);
-		unpack_bv_column_to_b(BV2, xx    );
-		unpack_bv_column_to_b(BV3, xx + 1);
-		unpack_bv_column_to_b(BV4, xx + 2);
+		/* x 主体结束后，把最后 5 个输入 slice 转回普通 B 布局。 */
+		{
+			double (*BV_unpack[5])[VECLEN] = {BV0, BV1, BV2, BV3, BV4};
+
+			for (int bv_col = 0; bv_col < 5; bv_col++) {
+				int unpack_x = xx - XSLOPE + bv_col;
+
+				for (y = YSTART; y <= NY + YSTART - VECLEN; y += VECLEN) {
+					v_center_3 = _mm256_load_pd(
+						&BV_unpack[bv_col][y - YSTART + 3][0]);
+					v_center_2 = _mm256_load_pd(
+						&BV_unpack[bv_col][y - YSTART + 2][0]);
+					v_center_1 = _mm256_load_pd(
+						&BV_unpack[bv_col][y - YSTART + 1][0]);
+					v_center_0 = _mm256_load_pd(
+						&BV_unpack[bv_col][y - YSTART][0]);
+					transpose(v_center_0, v_center_1,
+							  v_center_2, v_center_3, in, out);
+					vstore(B[t%2    ][unpack_x + STRIDE * 3][y], v_center_0);
+					vstore(B[(t+1)%2][unpack_x + STRIDE * 2][y], v_center_1);
+					vstore(B[t%2    ][unpack_x + STRIDE    ][y], v_center_2);
+					vstore(B[(t+1)%2][unpack_x             ][y], v_center_3);
+				}
+			}
+		}
 
 		/* 时间 tile 右侧依赖区回到 scalar 收尾。 */
 		for ( t = tt; t < tt + VECLEN; t++) {
@@ -288,10 +354,7 @@ void vectime(double* A, int NX, int NY, int T) {
 	free_extra_array(BV_buffer);
 }
 
-#undef compute_25p_y_chunk
 #undef compute_25p_feature_window
-#undef unpack_bv_column_to_b
-#undef pack_b_column_to_bv
 #undef load_feature_row_boundary
 #undef load_feature_row_direct
 #undef load_feature_row_from_bv

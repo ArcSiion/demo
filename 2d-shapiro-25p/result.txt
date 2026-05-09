@@ -1,0 +1,154 @@
+2d-shapiro-25p vectime benchmark
+date: 2026-05-09 15:49:50 +0800
+command: taskset -c 0 ./exe-2d-shapiro-25p NX NY T
+repetitions: 7 per case
+stable value: median of 7 runs
+note: all listed runs passed Correct!
+
+case: 16 16 40
+raw samples:
+rep=1 scalar=0.066494 vector=0.138378 vectime=0.204800 status=Correct
+rep=2 scalar=0.232727 vector=0.227556 vectime=0.222609 status=Correct
+rep=3 scalar=0.227556 vector=0.227556 vectime=0.217872 status=Correct
+rep=4 scalar=0.232727 vector=0.232727 vectime=0.222609 status=Correct
+rep=5 scalar=0.227556 vector=0.227556 vectime=0.222609 status=Correct
+rep=6 scalar=0.227556 vector=0.227556 vectime=0.217872 status=Correct
+rep=7 scalar=0.227556 vector=0.227556 vectime=0.222609 status=Correct
+median scalar:  0.227556 GStencil/s
+median vector:  0.227556 GStencil/s
+median vectime: 0.222609 GStencil/s
+median speedup over scalar: 0.978x
+
+case: 31 31 40
+raw samples:
+rep=1 scalar=0.237284 vector=0.241761 vectime=0.272624 status=Correct
+rep=2 scalar=0.238758 vector=0.240250 vectime=0.286866 status=Correct
+rep=3 scalar=0.240250 vector=0.240250 vectime=0.274571 status=Correct
+rep=4 scalar=0.241761 vector=0.231566 vectime=0.286866 status=Correct
+rep=5 scalar=0.232970 vector=0.241761 vectime=0.289023 status=Correct
+rep=6 scalar=0.240250 vector=0.240250 vectime=0.289023 status=Correct
+rep=7 scalar=0.240250 vector=0.240250 vectime=0.286866 status=Correct
+median scalar:  0.240250 GStencil/s
+median vector:  0.240250 GStencil/s
+median vectime: 0.286866 GStencil/s
+median speedup over scalar: 1.194x
+
+case: 64 64 128
+raw samples:
+rep=1 scalar=0.219001 vector=0.269004 vectime=0.516031 status=Correct
+rep=2 scalar=0.285249 vector=0.268590 vectime=0.505094 status=Correct
+rep=3 scalar=0.281573 vector=0.267494 vectime=0.517560 status=Correct
+rep=4 scalar=0.281875 vector=0.267221 vectime=0.513504 status=Correct
+rep=5 scalar=0.284013 vector=0.267767 vectime=0.514512 status=Correct
+rep=6 scalar=0.278728 vector=0.264658 vectime=0.517049 status=Correct
+rep=7 scalar=0.282331 vector=0.269418 vectime=0.518584 status=Correct
+median scalar:  0.281875 GStencil/s
+median vector:  0.267767 GStencil/s
+median vectime: 0.516031 GStencil/s
+median speedup over scalar: 1.831x
+
+case: 126 151 166
+raw samples:
+rep=1 scalar=0.256087 vector=0.264117 vectime=0.576335 status=Correct
+rep=2 scalar=0.260008 vector=0.264982 vectime=0.577178 status=Correct
+rep=3 scalar=0.262449 vector=0.264871 vectime=0.575180 status=Correct
+rep=4 scalar=0.262864 vector=0.262886 vectime=0.577072 status=Correct
+rep=5 scalar=0.260029 vector=0.264893 vectime=0.576125 status=Correct
+rep=6 scalar=0.262275 vector=0.263985 vectime=0.578552 status=Correct
+rep=7 scalar=0.259431 vector=0.263040 vectime=0.576967 status=Correct
+median scalar:  0.260029 GStencil/s
+median vector:  0.264117 GStencil/s
+median vectime: 0.576967 GStencil/s
+median speedup over scalar: 2.219x
+
+case: 256 256 128
+raw samples:
+rep=1 scalar=0.292949 vector=0.294234 vectime=0.676119 status=Correct
+rep=2 scalar=0.294968 vector=0.294234 vectime=0.674325 status=Correct
+rep=3 scalar=0.295801 vector=0.295114 vectime=0.630391 status=Correct
+rep=4 scalar=0.295978 vector=0.291372 vectime=0.671142 status=Correct
+rep=5 scalar=0.295020 vector=0.297574 vectime=0.680066 status=Correct
+rep=6 scalar=0.292970 vector=0.296942 vectime=0.678635 status=Correct
+rep=7 scalar=0.295010 vector=0.296082 vectime=0.677265 status=Correct
+median scalar:  0.295010 GStencil/s
+median vector:  0.295114 GStencil/s
+median vectime: 0.676119 GStencil/s
+median speedup over scalar: 2.292x
+
+case: 512 512 64
+raw samples:
+rep=1 scalar=0.259540 vector=0.256000 vectime=0.607760 status=Correct
+rep=2 scalar=0.259766 vector=0.257232 vectime=0.618515 status=Correct
+rep=3 scalar=0.259661 vector=0.257889 vectime=0.615587 status=Correct
+rep=4 scalar=0.259766 vector=0.255926 vectime=0.617150 status=Correct
+rep=5 scalar=0.259621 vector=0.257454 vectime=0.608355 status=Correct
+rep=6 scalar=0.259360 vector=0.257627 vectime=0.617991 status=Correct
+rep=7 scalar=0.259356 vector=0.257382 vectime=0.618082 status=Correct
+median scalar:  0.259621 GStencil/s
+median vector:  0.257382 GStencil/s
+median vectime: 0.617150 GStencil/s
+median speedup over scalar: 2.377x
+
+
+additional large-scale cases
+date: 2026-05-09 16:03:40 +0800
+command: taskset -c 0 ./exe-2d-shapiro-25p NX NY T
+repetitions: 7 per case
+stable value: median of 7 runs
+
+case: 768 768 48
+raw samples:
+rep=1 scalar=0.207184 vector=0.242840 vectime=0.627083 status=Correct
+rep=2 scalar=0.248343 vector=0.246922 vectime=0.617981 status=Correct
+rep=3 scalar=0.251524 vector=0.249437 vectime=0.627180 status=Correct
+rep=4 scalar=0.252115 vector=0.250880 vectime=0.626459 status=Correct
+rep=5 scalar=0.253159 vector=0.248891 vectime=0.625573 status=Correct
+rep=6 scalar=0.271054 vector=0.336254 vectime=0.802800 status=Correct
+rep=7 scalar=0.339215 vector=0.337488 vectime=0.808301 status=Correct
+median scalar:  0.252115 GStencil/s
+median vector:  0.249437 GStencil/s
+median vectime: 0.627083 GStencil/s
+median speedup over scalar: 2.487x
+
+case: 1024 1024 32
+raw samples:
+rep=1 scalar=0.310382 vector=0.240011 vectime=0.615576 status=Correct
+rep=2 scalar=0.250835 vector=0.251113 vectime=0.783634 status=Correct
+rep=3 scalar=0.252873 vector=0.216449 vectime=0.806616 status=Correct
+rep=4 scalar=0.214477 vector=0.250966 vectime=0.800745 status=Correct
+rep=5 scalar=0.265824 vector=0.209596 vectime=0.807043 status=Correct
+rep=6 scalar=0.225629 vector=0.230818 vectime=0.804373 status=Correct
+rep=7 scalar=0.244830 vector=0.251094 vectime=0.785892 status=Correct
+median scalar:  0.250835 GStencil/s
+median vector:  0.240011 GStencil/s
+median vectime: 0.800745 GStencil/s
+median speedup over scalar: 3.192x
+
+case: 1536 1536 16
+raw samples:
+rep=1 scalar=0.172917 vector=0.142572 vectime=0.354445 status=Correct
+rep=2 scalar=0.143720 vector=0.149805 vectime=0.425765 status=Correct
+rep=3 scalar=0.141829 vector=0.152073 vectime=0.472066 status=Correct
+rep=4 scalar=0.141193 vector=0.145519 vectime=0.459829 status=Correct
+rep=5 scalar=0.142222 vector=0.146153 vectime=0.428671 status=Correct
+rep=6 scalar=0.142108 vector=0.144760 vectime=0.397063 status=Correct
+rep=7 scalar=0.141680 vector=0.142895 vectime=0.373591 status=Correct
+median scalar:  0.142108 GStencil/s
+median vector:  0.145519 GStencil/s
+median vectime: 0.425765 GStencil/s
+median speedup over scalar: 2.996x
+
+case: 2048 2048 8
+raw samples:
+rep=1 scalar=0.145299 vector=0.146521 vectime=0.379485 status=Correct
+rep=2 scalar=0.140132 vector=0.148120 vectime=0.297746 status=Correct
+rep=3 scalar=0.140775 vector=0.149407 vectime=0.362680 status=Correct
+rep=4 scalar=0.140603 vector=0.145387 vectime=0.381131 status=Correct
+rep=5 scalar=0.140535 vector=0.145379 vectime=0.363312 status=Correct
+rep=6 scalar=0.140534 vector=0.144011 vectime=0.359432 status=Correct
+rep=7 scalar=0.140380 vector=0.143621 vectime=0.353629 status=Correct
+median scalar:  0.140535 GStencil/s
+median vector:  0.145387 GStencil/s
+median vectime: 0.362680 GStencil/s
+median speedup over scalar: 2.581x
+
