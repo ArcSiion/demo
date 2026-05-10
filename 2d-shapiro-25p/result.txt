@@ -152,3 +152,123 @@ median vector:  0.145387 GStencil/s
 median vectime: 0.362680 GStencil/s
 median speedup over scalar: 2.581x
 
+
+vectime_transpose_boundary_extra_array benchmark
+date: 2026-05-10 14:18:19 +0800
+command: taskset -c 0 ./exe-2d-shapiro-25p NX NY T
+repetitions: 7 per case
+stable value: median of 7 runs
+note: all listed runs passed Correct!
+
+case: 16 16 40
+raw samples:
+rep=1 scalar=0.091429 vector=0.089825 vectime_transpose_boundary_extra_array=0.090619 status=Correct
+rep=2 scalar=0.227556 vector=0.227556 vectime_transpose_boundary_extra_array=0.222609 status=Correct
+rep=3 scalar=0.066494 vector=0.179649 vectime_transpose_boundary_extra_array=0.227556 status=Correct
+rep=4 scalar=0.066494 vector=0.089043 vectime_transpose_boundary_extra_array=0.222609 status=Correct
+rep=5 scalar=0.066494 vector=0.120471 vectime_transpose_boundary_extra_array=0.227556 status=Correct
+rep=6 scalar=0.086050 vector=0.227556 vectime_transpose_boundary_extra_array=0.217872 status=Correct
+rep=7 scalar=0.227556 vector=0.232727 vectime_transpose_boundary_extra_array=0.232727 status=Correct
+median scalar:  0.086050 GStencil/s
+median vector:  0.179649 GStencil/s
+median vectime_transpose_boundary_extra_array: 0.222609 GStencil/s
+median speedup over scalar: 2.587x
+
+case: 31 31 40
+raw samples:
+rep=1 scalar=0.241761 vector=0.228810 vectime_transpose_boundary_extra_array=0.282647 status=Correct
+rep=2 scalar=0.096826 vector=0.240250 vectime_transpose_boundary_extra_array=0.286866 status=Correct
+rep=3 scalar=0.241761 vector=0.240250 vectime_transpose_boundary_extra_array=0.286866 status=Correct
+rep=4 scalar=0.240250 vector=0.220920 vectime_transpose_boundary_extra_array=0.284741 status=Correct
+rep=5 scalar=0.238758 vector=0.241761 vectime_transpose_boundary_extra_array=0.286866 status=Correct
+rep=6 scalar=0.240250 vector=0.241761 vectime_transpose_boundary_extra_array=0.286866 status=Correct
+rep=7 scalar=0.240250 vector=0.241761 vectime_transpose_boundary_extra_array=0.286866 status=Correct
+median scalar:  0.240250 GStencil/s
+median vector:  0.240250 GStencil/s
+median vectime_transpose_boundary_extra_array: 0.286866 GStencil/s
+median speedup over scalar: 1.194x
+
+case: 64 64 128
+raw samples:
+rep=1 scalar=0.282635 vector=0.268728 vectime_transpose_boundary_extra_array=0.552464 status=Correct
+rep=2 scalar=0.280969 vector=0.269280 vectime_transpose_boundary_extra_array=0.546133 status=Correct
+rep=3 scalar=0.280668 vector=0.268315 vectime_transpose_boundary_extra_array=0.553046 status=Correct
+rep=4 scalar=0.157918 vector=0.268041 vectime_transpose_boundary_extra_array=0.550723 status=Correct
+rep=5 scalar=0.269834 vector=0.268041 vectime_transpose_boundary_extra_array=0.547273 status=Correct
+rep=6 scalar=0.281573 vector=0.268178 vectime_transpose_boundary_extra_array=0.552464 status=Correct
+rep=7 scalar=0.282331 vector=0.267085 vectime_transpose_boundary_extra_array=0.549568 status=Correct
+median scalar:  0.280969 GStencil/s
+median vector:  0.268178 GStencil/s
+median vectime_transpose_boundary_extra_array: 0.550723 GStencil/s
+median speedup over scalar: 1.960x
+
+case: 126 151 166
+raw samples:
+rep=1 scalar=0.260695 vector=0.264383 vectime_transpose_boundary_extra_array=0.579614 status=Correct
+rep=2 scalar=0.262799 vector=0.264893 vectime_transpose_boundary_extra_array=0.580040 status=Correct
+rep=3 scalar=0.262428 vector=0.264937 vectime_transpose_boundary_extra_array=0.577389 status=Correct
+rep=4 scalar=0.260953 vector=0.265271 vectime_transpose_boundary_extra_array=0.579720 status=Correct
+rep=5 scalar=0.263061 vector=0.265204 vectime_transpose_boundary_extra_array=0.580893 status=Correct
+rep=6 scalar=0.259133 vector=0.264272 vectime_transpose_boundary_extra_array=0.579933 status=Correct
+rep=7 scalar=0.262188 vector=0.264671 vectime_transpose_boundary_extra_array=0.580466 status=Correct
+median scalar:  0.262188 GStencil/s
+median vector:  0.264893 GStencil/s
+median vectime_transpose_boundary_extra_array: 0.579933 GStencil/s
+median speedup over scalar: 2.212x
+
+case: 256 256 128
+raw samples:
+rep=1 scalar=0.283878 vector=0.293729 vectime_transpose_boundary_extra_array=0.676446 status=Correct
+rep=2 scalar=0.292449 vector=0.295280 vectime_transpose_boundary_extra_array=0.627467 status=Correct
+rep=3 scalar=0.294461 vector=0.290424 vectime_transpose_boundary_extra_array=0.684561 status=Correct
+rep=4 scalar=0.293513 vector=0.289952 vectime_transpose_boundary_extra_array=0.679075 status=Correct
+rep=5 scalar=0.288705 vector=0.281743 vectime_transpose_boundary_extra_array=0.675792 status=Correct
+rep=6 scalar=0.275452 vector=0.291920 vectime_transpose_boundary_extra_array=0.688494 status=Correct
+rep=7 scalar=0.285609 vector=0.289322 vectime_transpose_boundary_extra_array=0.684003 status=Correct
+median scalar:  0.288705 GStencil/s
+median vector:  0.290424 GStencil/s
+median vectime_transpose_boundary_extra_array: 0.679075 GStencil/s
+median speedup over scalar: 2.352x
+
+case: 512 512 64
+raw samples:
+rep=1 scalar=0.165117 vector=0.165616 vectime_transpose_boundary_extra_array=0.388929 status=Correct
+rep=2 scalar=0.221560 vector=0.249583 vectime_transpose_boundary_extra_array=0.584878 status=Correct
+rep=3 scalar=0.248470 vector=0.256305 vectime_transpose_boundary_extra_array=0.603063 status=Correct
+rep=4 scalar=0.257130 vector=0.255797 vectime_transpose_boundary_extra_array=0.609726 status=Correct
+rep=5 scalar=0.241309 vector=0.189235 vectime_transpose_boundary_extra_array=0.385063 status=Correct
+rep=6 scalar=0.180228 vector=0.248257 vectime_transpose_boundary_extra_array=0.609770 status=Correct
+rep=7 scalar=0.256764 vector=0.251235 vectime_transpose_boundary_extra_array=0.563997 status=Correct
+median scalar:  0.241309 GStencil/s
+median vector:  0.249583 GStencil/s
+median vectime_transpose_boundary_extra_array: 0.584878 GStencil/s
+median speedup over scalar: 2.424x
+
+case: 768 768 48
+raw samples:
+rep=1 scalar=0.185031 vector=0.198774 vectime_transpose_boundary_extra_array=0.714830 status=Correct
+rep=2 scalar=0.345908 vector=0.346289 vectime_transpose_boundary_extra_array=0.800078 status=Correct
+rep=3 scalar=0.341428 vector=0.338809 vectime_transpose_boundary_extra_array=0.808971 status=Correct
+rep=4 scalar=0.344725 vector=0.347215 vectime_transpose_boundary_extra_array=0.810546 status=Correct
+rep=5 scalar=0.346951 vector=0.344624 vectime_transpose_boundary_extra_array=0.802141 status=Correct
+rep=6 scalar=0.342225 vector=0.348296 vectime_transpose_boundary_extra_array=0.799445 status=Correct
+rep=7 scalar=0.346819 vector=0.346994 vectime_transpose_boundary_extra_array=0.810731 status=Correct
+median scalar:  0.344725 GStencil/s
+median vector:  0.346289 GStencil/s
+median vectime_transpose_boundary_extra_array: 0.802141 GStencil/s
+median speedup over scalar: 2.327x
+
+case: 1024 1024 32
+raw samples:
+rep=1 scalar=0.337842 vector=0.317804 vectime_transpose_boundary_extra_array=0.816489 status=Correct
+rep=2 scalar=0.334571 vector=0.323863 vectime_transpose_boundary_extra_array=0.807004 status=Correct
+rep=3 scalar=0.333440 vector=0.329666 vectime_transpose_boundary_extra_array=0.811945 status=Correct
+rep=4 scalar=0.336341 vector=0.322639 vectime_transpose_boundary_extra_array=0.813283 status=Correct
+rep=5 scalar=0.333500 vector=0.330195 vectime_transpose_boundary_extra_array=0.794922 status=Correct
+rep=6 scalar=0.334434 vector=0.327558 vectime_transpose_boundary_extra_array=0.807160 status=Correct
+rep=7 scalar=0.334254 vector=0.326307 vectime_transpose_boundary_extra_array=0.813599 status=Correct
+median scalar:  0.334434 GStencil/s
+median vector:  0.326307 GStencil/s
+median vectime_transpose_boundary_extra_array: 0.811945 GStencil/s
+median speedup over scalar: 2.428x
+
