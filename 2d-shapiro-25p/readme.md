@@ -1,8 +1,7 @@
-2d-shapiro-25p vectime notes
+2d-shapiro-25p vectime_transpose_boundary_extra_array notes
 
-这版 vectime.c 借鉴 3d-jacobi-27p 的 extra-array 思路。
-接口和 define.h 里的 Compute_scalar / Compute_1vector 都不改。
-当前 vectime 假设 NX 和 NY 足够进入 temporal-vector 主体。
+这版 vectime_transpose_boundary_extra_array 借鉴 3d-jacobi-27p 的 extra-array 思路。
+当前算法假设 NX 和 NY 足够进入 temporal-vector 主体。
 
 时间向量仍然是 4 个 lane。
 对于 base x 和 y，向量内容沿用 2d9p 的布局：
@@ -36,14 +35,14 @@ y 高边界和 y tail 使用 boundary/direct 路径。
 m2, m1, c, p1, p2。
 现在加载时先聚合成 3 个特征：
 c  = x
-h1 = x - 1 + x + 1
-h2 = x - 2 + x + 2
+d1 = x - 1 + x + 1
+d2 = x - 2 + x + 2
 
 一个 y chunk 先装入 5 行 row0..row4。
 计算完一个 yy 后，用 row slot 环形复用，只加载下一行。
 这样 4 个连续 yy 需要加载 y - 2 到 y + 5 共 8 行。
-每行只保留 c/h1/h2，所以窗口从 25 个 vec 降到 15 个 vec。
-compute_25p_feature_window 按系数组逐段生成 sum，并立刻 FMA 到 v_result。
+每行只保留 c/d1/d2，所以窗口从 25 个 vec 降到 15 个 vec。
+Compute_1vector_25p 按系数组逐段生成 sum，并立刻 FMA 到 v_result。
 这样避免 5 组 sum 同时长时间占用寄存器。
 
 当前没有 BV_ACC，也没有把 partial sum 写回内存。

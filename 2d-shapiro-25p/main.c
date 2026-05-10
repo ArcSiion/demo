@@ -50,7 +50,7 @@ int main(int argc, char* argv[]) {
 
 	run_and_test(naive_vector, A);
 
-	run_and_test(vectime, A);
+	run_and_test(vectime_transpose_boundary_extra_array, A);
 
 
 	free(A);
