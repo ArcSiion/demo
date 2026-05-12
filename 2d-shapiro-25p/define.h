@@ -76,9 +76,6 @@
 		row_d2 = _mm256_add_pd(tmp_left, tmp_right);\
 	}
 
-// 使用 5 个 feature row 计算一个 25p 输出时间向量。
-// 计算分组顺序为 C00, C01, C02, C11, C22, C12。
-// 宏体内部不能使用 // 注释加反斜杠续行，否则会破坏宏展开。
 #define Compute_1vector_25p(\
 		m2_c, m2_d1, m2_d2,\
 		m1_c, m1_d1, m1_d2,\
@@ -144,6 +141,7 @@
 void naive_scalar(double * A, int NX, int NY, int T);
 void naive_vector(double * A, int NX, int NY, int T);
 void vectime_transpose_boundary_extra_array(double* A, int NX, int NY, int T);
+void vectime_transpose_boundary_extra_array_512(double* A, int NX, int NY, int T);
 int checkresult( int NX, int NY, double (* A_correct)[ NY+2*YSTART], double (* A)[ NY+2*YSTART]);
 
 typedef __m256d vec;

@@ -10,7 +10,8 @@
 	gettimeofday(&start, 0);\
 	func((double *)A, NX, NY, T);\
 	gettimeofday(&end, 0);\
-	printf(#func", NX = %d, NY = %d, T = %d, GStencil/s = %f\n", NX, NY, T,\
+	printf("%-10s %-42s NX = %d, NY = %d, T = %d, GStencil/s = %f\n",\
+			"Reference", #func",", NX, NY, T,\
 			((double) NX * NY * T) / (double)(end.tv_sec - start.tv_sec + (end.tv_usec - start.tv_usec) * 1.0e-6) / 1000000000L)
 
 // run_and_test 用 naive_scalar 生成的 A_correct 检查当前算法结果。
@@ -18,8 +19,11 @@
 	gettimeofday(&start, 0);\
 	func((double *)A, NX, NY, T);\
 	gettimeofday(&end, 0);\
-	if(checkresult(NX, NY, ( double (* )[ NY+2*YSTART])&A_correct[T % 2][0][0], ( double (* )[ NY+2*YSTART])&A[T % 2][0][0])) printf("Correct!\t");\
-	printf(#func", NX = %d, NY = %d, T = %d, GStencil/s = %f\n", NX, NY, T,\
+	printf("%-10s %-42s NX = %d, NY = %d, T = %d, GStencil/s = %f\n",\
+			checkresult(NX, NY,\
+				( double (* )[ NY+2*YSTART])&A_correct[T % 2][0][0],\
+				( double (* )[ NY+2*YSTART])&A[T % 2][0][0]) ? "Correct!" : "Wrong!",\
+			#func",", NX, NY, T,\
 			((double) NX * NY * T) / (double)(end.tv_sec - start.tv_sec + (end.tv_usec - start.tv_usec) * 1.0e-6) / 1000000000L)
 
 
@@ -51,6 +55,8 @@ int main(int argc, char* argv[]) {
 	run_and_test(naive_vector, A);
 
 	run_and_test(vectime_transpose_boundary_extra_array, A);
+
+	run_and_test(vectime_transpose_boundary_extra_array_512, A);
 
 
 	free(A);
