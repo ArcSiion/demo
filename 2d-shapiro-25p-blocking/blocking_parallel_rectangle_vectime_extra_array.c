@@ -1,6 +1,9 @@
 #include "define.h"
 
-void vectime_transpose_boundary_extra_array(double* A, int NX, int NY, int T) {
+// 256 版本先收敛到已经验证正确的 x-time extra-array 内核。
+// xb/yb/tb 保持 blocking 接口兼容；真正的 y-wavefront vectime 仍需单独推导 lane 布局。
+void blocking_parallel_rectangle_vectime_extra_array(double* A, int NX, int NY,
+													 int T, int xb, int yb, int tb) {
 	
 	double (* B)[NX + 2 * XSTART][NY + 2 * YSTART] =
 		(double (*)[NX + 2 * XSTART][NY + 2 * YSTART]) A;

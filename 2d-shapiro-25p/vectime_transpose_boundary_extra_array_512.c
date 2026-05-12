@@ -213,19 +213,29 @@ void vectime_transpose_boundary_extra_array_512(double* A, int NX, int NY, int T
 				vstore_512(BV5[y - YSTART + 7][0], v_result);
 				_mm512_storeu_pd(&B[t%2][x][y], out);
 				y += VVECLEN;
+
+				// 低边界 chunk 结束后，保留 y-2..y+1 四行给主路径复用。
+				r2_c = r0_c;
+				r2_d1 = r0_d1;
+				r2_d2 = r0_d2;
+				r0_c = r3_c;
+				r0_d1 = r3_d1;
+				r0_d2 = r3_d2;
+				r3_c = r1_c;
+				r3_d1 = r1_d1;
+				r3_d2 = r1_d2;
+				r1_c = r4_c;
+				r1_d1 = r4_d1;
+				r1_d2 = r4_d2;
 			}
 
-			// y 主路径：所有 stencil 行都在 BV 中，只走无分支 BV loader。
+			// y 主路径：跨 chunk 复用上一轮留下的四行，只补 y+2..y+9。
 			// 最后一个打包 y：BV 只保存完整 VVECLEN 分块覆盖到的行。
 			for ( ; y + VVECLEN - 1 + YSLOPE <=
 					YSTART + ((NY - VVECLEN) / VVECLEN) * VVECLEN + VVECLEN - 1;
 				  y += VVECLEN) {
 				// in 是下一轮 x 迭代需要拼入 Input_Output 的右侧时间向量。
 				in = _mm512_loadu_pd(&B[t%2][x + STRIDE * VVECLEN][y]);
-				load_sum_from_bv_512(r0_c, r0_d1, r0_d2, y - 2);
-				load_sum_from_bv_512(r1_c, r1_d1, r1_d2, y - 1);
-				load_sum_from_bv_512(r2_c, r2_d1, r2_d2, y    );
-				load_sum_from_bv_512(r3_c, r3_d1, r3_d2, y + 1);
 				load_sum_from_bv_512(r4_c, r4_d1, r4_d2, y + 2);
 
 				Compute_1vector_25p_512(
@@ -307,6 +317,20 @@ void vectime_transpose_boundary_extra_array_512(double* A, int NX, int NY, int T
 				Input_Output_8_512(out, v_result, in);
 				vstore_512(BV5[y - YSTART + 7][0], v_result);
 				_mm512_storeu_pd(&B[t%2][x][y], out);
+
+				// 为下一个 y chunk 形成新的 y-2..y+1 窗口。
+				r2_c = r0_c;
+				r2_d1 = r0_d1;
+				r2_d2 = r0_d2;
+				r0_c = r3_c;
+				r0_d1 = r3_d1;
+				r0_d2 = r3_d2;
+				r3_c = r1_c;
+				r3_d1 = r1_d1;
+				r3_d2 = r1_d2;
+				r1_c = r4_c;
+				r1_d1 = r4_d1;
+				r1_d2 = r4_d2;
 			}
 
 			// y 高边界 chunk：最后两行超出 BV 打包区，直接从 B 读取。
