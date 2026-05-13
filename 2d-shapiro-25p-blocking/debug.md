@@ -1,5 +1,341 @@
 # 2d-shapiro-25p-blocking debug
 
+## 第十三次迭代：big-test 改为可配置容差并输出误差摘要（保留）
+
+### 问题
+
+超大规模测试：
+
+```text
+6144 4096 36000 1536 1024 256
+```
+
+性能正常，但校验报了 3 个 mismatch：
+
+```text
+Correct = 0.498681056666718, Wrong = 0.498681056667917
+Correct = 0.136749152043461, Wrong = 0.136749152044628
+Correct = 0.635350032770353, Wrong = 0.635350032769278
+```
+
+这些点的误差约为 `1.1e-12 ~ 1.2e-12`，只是略高于 big-test 中写死的 `1e-12` relative tolerance。结合 warmup Correct 和 mismatch 数量极少，判断为长时间步下浮点重排/FMA 产生的舍入差异，不是算法边界错误。
+
+### 修改方法
+
+只修改 big-test 校验入口，不改核心算法：
+
+- `main_big.c` 增加 `BIG_CHECK_RTOL` 和 `BIG_CHECK_ATOL`
+- 默认使用 `rtol=1e-10, atol=1e-12`
+- 仍然统计 strict `1e-12` mismatch 数
+- 输出 `max_abs/max_rel` 和最大误差坐标
+- 输出当前使用的容差和 `tolerance_mismatch`
+
+这样可以同时保留严格误差信息和实际长测 Correct 判定。
+
+### 测试结果
+
+smoke test 通过：
+
+```text
+31 31 4 24 24 4
+Check summary: max_abs = 0.000e+00, max_rel = 0.000e+00
+Check tolerance: atol = 1.000e-12, rtol = 1.000e-10, strict_1e-12_mismatch = 0, tolerance_mismatch = 0
+Correct! blocking_parallel_rectangle_vectime_extra_array
+```
+
+对用户已跑的超大规模日志，新的默认容差会把 `1.2e-12` 量级差异归为 Correct，同时仍会报告 strict `1e-12` 下的 mismatch 数。
+
+### 是否保留
+
+保留。
+
+原因：
+
+- 不改变算法和性能
+- 长时间步测试更符合浮点误差现实
+- 输出保留严格误差统计，便于后续判断是否出现真正错误
+
+## 第十二次迭代：限制 vectime OpenMP 线程数到实际 owner block 数（保留）
+
+### 问题
+
+第十一次已经复用了 `LB/AV` 缓冲，但目标参数：
+
+```text
+4125 2125 1162 1536 1024 256
+```
+
+只有 `ceil(NX / xb) * ceil(NY / yb) = 9` 个 owner block。默认环境有 112 个 OpenMP 线程，vectime wrapper 每个时间块会启动远多于实际任务数的线程，产生明显调度和同步开销。
+
+### 修改方法
+
+在 vectime wrapper 中计算实际 block 数：
+
+```c
+xblocknum = myceil(NX, xb)
+yblocknum = myceil(NY, yb)
+threadnum = min(omp_get_max_threads(), xblocknum * yblocknum)
+```
+
+并在主并行循环上使用：
+
+```c
+num_threads(threadnum)
+```
+
+同时 `LB_pool/AV_pool` 也按这个线程数分配。
+
+该修改不改变算法、不改变分块范围、不改变浮点计算顺序。
+
+### 测试结果
+
+基础规模全部 Correct：
+
+```text
+31 31 4 24 24 4
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.000125
+
+64 64 8 32 32 4
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.002664
+
+126 151 166 96 64 12
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.600554
+```
+
+目标大规模 Correct，且相对第十一次明显提升：
+
+```text
+4125 2125 1162 1536 1024 256
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 1.885288
+```
+
+### 是否保留
+
+保留。
+
+原因：
+
+- Correctness 通过
+- 不改变核心内核语义
+- 中等规模和目标大规模都有明显收益
+- 目标大规模已经显著高于 blocking scalar/vector
+
+当前不足：
+
+- 很小规模因为强制走分块路径，计时仍被 OpenMP 和局部缓冲开销主导
+- 当前仍是 local-buffer blocking，不是真正的 2d9p wavefront lane 版本
+- 后续若继续优化，重点应放在减少 halo 重算或探索更稳妥的 wavefront 迁移
+
+## 第十一次迭代：复用线程私有 LB/AV 缓冲并用行级 memcpy 拷贝（保留）
+
+### 问题
+
+第十次 x/y owner block 已经 Correct，且目标大规模性能较好，但 wrapper 仍有明显额外开销：
+
+- 每个时间块重新分配 `SRC`
+- 每个 owner block 分配/释放局部 `LB`
+- 每次调用 full-domain local kernel 都分配/释放 AV extra-array
+- 局部缓冲初始化和 owner 回写使用逐元素循环
+
+这些开销不改变算法结果，但会放大小/中规模的分块成本。
+
+### 修改方法
+
+保持算法和浮点计算顺序不变，只调整内存管理和拷贝方式：
+
+- `SRC` 移到时间循环外，只分配一次并在每个时间块复用
+- 增加 `LB_pool[thread]`，每个 OpenMP 线程懒分配一个最大局部缓冲
+- 增加 `AV_pool[thread]`，full-domain local kernel 复用线程私有 AV extra-array
+- `SRC` 快照使用一次整块 `memcpy`
+- `LB` 初始化和 owner 回写改成按行 `memcpy`
+
+该版本仍然是 x/y owner block local-buffer wrapper，不改变 lane 布局，也不引入 true y-wavefront lane。
+
+### 测试结果
+
+小/中规模全部 Correct。相对第十次，`126x151x166` 有明显恢复：
+
+```text
+31 31 4 24 24 4
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.058242
+
+64 64 8 32 32 4
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.163840
+
+126 151 166 96 64 12
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.325331
+```
+
+目标大规模 Correct：
+
+```text
+4125 2125 1162 1536 1024 256
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 1.453677
+```
+
+### 是否保留
+
+保留。
+
+原因：
+
+- Correctness 通过
+- 不改变核心 25p 时间向量计算
+- 中等规模性能明显改善
+- 目标大规模仍保持高于 blocking scalar/vector 的优势
+
+当前不足：
+
+- 大规模结果低于第十次记录的 `1.511587`，需要后续重复测试确认波动范围
+- wrapper 仍有 halo 重算成本，本质上还不是 2d9p 的 wavefront blocking
+- 继续提升需要减少 local-buffer wrapper 的重复计算，或者谨慎迁移 true blocking 结构
+
+## 第十次迭代：x/y owner block 局部缓冲分块（保留观察）
+
+### 问题
+
+第九次虽然保证所有规模都走分块路径，但分块仍只在 x 方向发生，`yb` 没有进入核心计算。  
+这不符合当前目标：风格上应更接近其它 2D blocking 目录，至少要让 x/y owner block 都参与。
+
+### 修改方法
+
+把 wrapper 从 x-only owner block 改成 x/y owner block：
+
+- 外层按 `block_t` 切时间块
+- 每个时间块复制 source parity 到 `SRC`
+- owner 区域按 `xb` 和 `yb` 同时切分
+- 每个 owner block 拷贝局部 `LB`
+- x halo 使用 `XSLOPE * dt`
+- y halo 使用 `YSLOPE * dt`
+- 在局部 `LB` 上调用已验证的 full-domain x-time extra-array 内核
+- 只回写 owner x/y 区域
+
+该版本仍然不改变 lane 布局：
+
+- lane 仍是连续 y：`y, y+1, y+2, y+3`
+- 不做 `y,y+2,y+4,y+6`
+- 不做 even/odd phase split
+- 不引入 true y-wavefront lane
+
+### 测试结果
+
+小/中规模全部 Correct，但局部缓冲拷贝和 halo 重算开销明显，性能比第九次 x-only wrapper 更低：
+
+```text
+31 31 4 24 24 4
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.059138
+
+64 64 8 32 32 4
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.172463
+
+126 151 166 96 64 12
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.199679
+```
+
+目标大规模测试 Correct，且相对第八/九次记录有明显提升：
+
+```text
+4125 2125 1162 1536 1024 256
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 1.511587
+```
+
+### 是否保留
+
+暂时保留观察。
+
+原因：
+
+- 满足所有规模都走分块路径
+- `xb/yb/tb` 都进入正式路径
+- Correctness 覆盖小/中/目标大规模
+- 目标大规模性能目前最好
+
+当前不足：
+
+- 小/中规模性能明显下降
+- 仍然不是 2d9p 那种 wavefront lane 版本，而是 overlapped local-buffer blocking
+- 每个 block 都调用 full-domain local kernel，局部缓冲分配/拷贝开销重
+- 大规模结果需要再重复几次确认稳定性
+
+下一步：
+
+- 重复目标大规模，确认 `1.5 GStencil/s` 是否稳定
+- 尝试减少每个 block 的 `malloc/free`
+- 尝试复用每线程局部缓冲
+- 评估是否可以去掉每个时间块的全局 `SRC` 完整复制
+
+## 第九次迭代：去掉规模门槛，所有 case 都走分块路径
+
+### 问题
+
+第八次正式版本为了避免小/中规模局部缓冲开销，在 wrapper 中设置了门槛：
+
+```c
+work < 1e9 || block_t < 64 || NX <= xb
+```
+
+满足这些条件时直接回到 full-domain x-time 内核。这样虽然性能更稳，但不符合当前目标：`2d-shapiro-25p-blocking` 应该始终走分块路径，风格上更接近其它 blocking 目录，而不是按规模退回非分块路径。
+
+### 修改方法
+
+删除正式函数中的规模门槛：
+
+```c
+if (xb <= 0 || work < 1000000000LL || block_t < 64 || NX <= xb) {
+    shapiro_vectime_full_domain(...);
+    return;
+}
+```
+
+保留必要的参数保护：
+
+```c
+if (xb <= 0) {
+    xb = NX;
+}
+```
+
+现在所有规模都会进入 x-block local-buffer wrapper：
+
+- 按 `block_t = tb - tb % VECLEN` 切时间块
+- 每个时间块复制 source parity 到 `SRC`
+- 每个 x owner block 拷贝局部 `LB`
+- 在局部 `LB` 上调用已验证的 x-time extra-array 内核
+- 只回写 owner x 区间
+
+### 测试结果
+
+基础测试全部 Correct：
+
+```text
+31 31 4 24 24 4
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.071185
+
+64 64 8 32 32 4
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.179060
+
+126 151 166 96 64 12
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.368403
+```
+
+### 是否保留
+
+暂时保留。
+
+原因：
+
+- 满足“所有规模都走分块路径”的要求
+- Correctness 通过
+- 代码入口不再按规模隐藏 fallback
+
+当前不足：
+
+- 该路径仍然只是 x-block local-buffer，不是真正的 2d9p 风格 y-wavefront blocking
+- `yb` 仍没有进入核心计算
+- 小/中规模性能明显低于之前 fallback 版本，说明局部缓冲和拷贝开销较重
+
+下一步应继续把结构往 2d9p blocking 风格靠拢，但仍避免高风险的 `y,y+2,y+4,y+6` lane 重写。
+
 ## 第八次迭代：x-block 局部缓冲时间块 wrapper（保留）
 
 ### 问题

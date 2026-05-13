@@ -1,15 +1,14 @@
 #include "define.h"
 
-// 已验证正确的 full-domain x-time extra-array 内核。
-// wrapper 在大规模时按 x owner block 调用它；小规模直接走该路径避免拷贝开销。
-static void shapiro_vectime_full_domain(double* A, int NX, int NY,
-										int T, int xb, int yb, int tb) {
-	
+// 局部块上的 x-time extra-array 内核，外层分块负责 halo 拷贝和 owner 回写。
+static void vectime_extra_array_kernel(double *A, int NX, int NY, int T,
+									   double *AV_base)
+{
 	double (* B)[NX + 2 * XSTART][NY + 2 * YSTART] =
 		(double (*)[NX + 2 * XSTART][NY + 2 * YSTART]) A;
 	double tmp[VECLEN];
 
-	int tt, t =0, x, xx, y;
+	int tt, t = 0, x, xx, y;
 	const int y_vec_last = YSTART + ((NY - VECLEN) / VECLEN) * VECLEN;
 	const int y_vec_limit = y_vec_last + VECLEN - 1;
 	const int y_tail_begin = y_vec_last + VECLEN;
@@ -25,9 +24,7 @@ static void shapiro_vectime_full_domain(double* A, int NX, int NY,
 	vec in, out, v_result;
 	SET_COFF;
 
-	// 当前版本假设 NX/NY 足够进入 temporal-vector 主体。
-	double (* AV)[NY][VECLEN] = (double (*)[NY][VECLEN])
-		alloc_extra_array(sizeof(double) * NY * VECLEN * 6);
+	double (* AV)[NY][VECLEN] = (double (*)[NY][VECLEN])AV_base;
 
 	double (* BV0)[VECLEN] = (double (*)[VECLEN]) AV;
 	double (* BV1)[VECLEN] = (double (*)[VECLEN]) (AV + 1);
@@ -376,77 +373,113 @@ static void shapiro_vectime_full_domain(double* A, int NX, int NY,
 		}
 	}
 
-	free_extra_array(AV);
 }
 
 void blocking_parallel_rectangle_vectime_extra_array(double* A, int NX, int NY,
-													 int T, int xb, int yb, int tb) {
-	long long work = (long long)NX * NY * T;
+													 int T, int xb, int yb, int tb)
+{
 	int block_t = tb - tb % VECLEN;
+
 	if (block_t < VECLEN) {
 		block_t = VECLEN;
 	}
-
-	if (xb <= 0 || work < 1000000000LL || block_t < 64 || NX <= xb) {
-		shapiro_vectime_full_domain(A, NX, NY, T, xb, yb, tb);
-		return;
+	if (xb <= 0) {
+		xb = NX;
+	}
+	if (yb <= 0) {
+		yb = NY;
 	}
 
 	double (* B)[NX + 2 * XSTART][NY + 2 * YSTART] =
 		(double (*)[NX + 2 * XSTART][NY + 2 * YSTART]) A;
+
+	int max_x_halo = XSLOPE * block_t;
+	int max_y_halo = YSLOPE * block_t;
+	int max_local_NX = min(NX, xb + 2 * max_x_halo);
+	int max_local_NY = min(NY, yb + 2 * max_y_halo);
+	int xblocknum = myceil(NX, xb);
+	int yblocknum = myceil(NY, yb);
+	int threadnum = min(omp_get_max_threads(), xblocknum * yblocknum);
+
+	threadnum = max(threadnum, 1);
+
+	size_t max_lb_size = sizeof(double) * 2 *
+		(max_local_NX + 2 * XSTART) * (max_local_NY + 2 * YSTART);
+	size_t max_av_size = sizeof(double) * max_local_NY * VECLEN * 6;
+
+	double (* SRC)[NY + 2 * YSTART] =
+		(double (*)[NY + 2 * YSTART])
+		malloc(sizeof(double) * (NX + 2 * XSTART) * (NY + 2 * YSTART));
+	double **LB_pool = (double **)calloc(threadnum, sizeof(double *));
+	double **AV_pool = (double **)calloc(threadnum, sizeof(double *));
 
 	for (int tt = 0; tt < T; tt += block_t) {
 		int dt = min(block_t, T - tt);
 		int src = tt % 2;
 		int dst = (tt + dt) % 2;
 		int x_halo = XSLOPE * dt;
+		int y_halo = YSLOPE * dt;
 
-		double (* SRC)[NY + 2 * YSTART] =
-			(double (*)[NY + 2 * YSTART])
-			malloc(sizeof(double) * (NX + 2 * XSTART) * (NY + 2 * YSTART));
+		memcpy(SRC, &B[src][0][0],
+			   sizeof(double) * (NX + 2 * XSTART) * (NY + 2 * YSTART));
 
-		for (int x = 0; x < NX + 2 * XSTART; x++) {
-			for (int y = 0; y < NY + 2 * YSTART; y++) {
-				SRC[x][y] = B[src][x][y];
-			}
-		}
-
-		#pragma omp parallel for schedule(dynamic, 1)
+		#pragma omp parallel for collapse(2) schedule(dynamic, 1) num_threads(threadnum)
 		for (int owner_begin = XSTART;
 			 owner_begin < NX + XSTART;
 			 owner_begin += xb) {
-			int owner_end = min(owner_begin + xb, NX + XSTART);
-			int copy_begin = max(XSTART, owner_begin - x_halo);
-			int copy_end = min(NX + XSTART, owner_end + x_halo);
-			int local_NX = copy_end - copy_begin;
+			for (int owner_y_begin = YSTART;
+				 owner_y_begin < NY + YSTART;
+				 owner_y_begin += yb) {
+				int owner_end = min(owner_begin + xb, NX + XSTART);
+				int owner_y_end = min(owner_y_begin + yb, NY + YSTART);
+				int copy_begin = max(XSTART, owner_begin - x_halo);
+				int copy_end = min(NX + XSTART, owner_end + x_halo);
+				int copy_y_begin = max(YSTART, owner_y_begin - y_halo);
+				int copy_y_end = min(NY + YSTART, owner_y_end + y_halo);
+				int local_NX = copy_end - copy_begin;
+				int local_NY = copy_y_end - copy_y_begin;
+				int myid = omp_get_thread_num();
 
-			double (* LB)[local_NX + 2 * XSTART][NY + 2 * YSTART] =
-				(double (*)[local_NX + 2 * XSTART][NY + 2 * YSTART])
-				malloc(sizeof(double) * 2 *
-					   (local_NX + 2 * XSTART) * (NY + 2 * YSTART));
+				if (LB_pool[myid] == NULL) {
+					LB_pool[myid] = (double *)malloc(max_lb_size);
+				}
+				if (AV_pool[myid] == NULL) {
+					AV_pool[myid] = (double *)alloc_extra_array(max_av_size);
+				}
 
-			for (int lx = 0; lx < local_NX + 2 * XSTART; lx++) {
-				int gx = copy_begin + lx - XSTART;
-				for (int y = 0; y < NY + 2 * YSTART; y++) {
-					LB[0][lx][y] = SRC[gx][y];
-					LB[1][lx][y] = SRC[gx][y];
+				double (* LB)[local_NX + 2 * XSTART][local_NY + 2 * YSTART] =
+					(double (*)[local_NX + 2 * XSTART][local_NY + 2 * YSTART])
+					LB_pool[myid];
+
+				size_t local_row_size =
+					sizeof(double) * (local_NY + 2 * YSTART);
+				for (int lx = 0; lx < local_NX + 2 * XSTART; lx++) {
+					int gx = copy_begin + lx - XSTART;
+					int gy = copy_y_begin - YSTART;
+					memcpy(&LB[0][lx][0], &SRC[gx][gy], local_row_size);
+					memcpy(&LB[1][lx][0], &SRC[gx][gy], local_row_size);
+				}
+
+				vectime_extra_array_kernel((double *)LB, local_NX,
+					local_NY, dt, AV_pool[myid]);
+
+				int local_parity = dt % 2;
+				for (int gx = owner_begin; gx < owner_end; gx++) {
+					int lx = XSTART + gx - copy_begin;
+					int ly = YSTART + owner_y_begin - copy_y_begin;
+					memcpy(&B[dst][gx][owner_y_begin],
+						   &LB[local_parity][lx][ly],
+						   sizeof(double) * (owner_y_end - owner_y_begin));
 				}
 			}
-
-			shapiro_vectime_full_domain((double *)LB, local_NX, NY, dt,
-										xb, yb, tb);
-
-			int local_parity = dt % 2;
-			for (int gx = owner_begin; gx < owner_end; gx++) {
-				int lx = XSTART + gx - copy_begin;
-				for (int y = YSTART; y < NY + YSTART; y++) {
-					B[dst][gx][y] = LB[local_parity][lx][y];
-				}
-			}
-
-			free(LB);
 		}
-
-		free(SRC);
 	}
+
+	for (int i = 0; i < threadnum; i++) {
+		free(LB_pool[i]);
+		free_extra_array(AV_pool[i]);
+	}
+	free(LB_pool);
+	free(AV_pool);
+	free(SRC);
 }
