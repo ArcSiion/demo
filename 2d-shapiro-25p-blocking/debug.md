@@ -1,5 +1,454 @@
 # 2d-shapiro-25p-blocking debug
 
+## 第八次迭代：x-block 局部缓冲时间块 wrapper（保留）
+
+### 问题
+
+前几次 y 方向分块要么破坏时间状态顺序，要么 Correct 但性能明显下降。继续保持当前 256 时间向量组成不变，改从 x 方向做 owner block：每个时间块只在局部 x 区间内调用已验证的 full-domain x-time 内核，再回写 owner 区域。
+
+### 修改方法
+
+正式函数拆成两层：
+
+- `shapiro_vectime_full_domain`：原已验证 x-time extra-array 内核，保持 `Input_Output_1..4`、连续 y lane、`BV0..BV5` 轮转不变
+- `blocking_parallel_rectangle_vectime_extra_array`：大规模时启用 x-block wrapper，小/中规模直接 fallback 到 full-domain 内核
+
+x-block wrapper 策略：
+
+- 每个时间块 `dt = min(block_t, T - tt)`，其中 `block_t = tb - tb % VECLEN`
+- 先复制当前 source parity 到 `SRC` 快照，避免 `dt` 为偶数时 owner 回写覆盖其它 block 的输入 halo
+- 每个 x owner block 拷贝 `[owner_begin - XSLOPE * dt, owner_end + XSLOPE * dt)` 的局部缓冲
+- 局部缓冲两个 parity 都初始化为同一 source 快照
+- 调用 `shapiro_vectime_full_domain((double *)LB, local_NX, NY, dt, ...)`
+- 只把 owner x 区间、真实 y 区间的 final parity 回写到全局数组
+- 当前保留门槛：`work >= 1e9`、`block_t >= 64`、`NX > xb`；否则走 full-domain fallback，避免小规模拷贝回退
+
+### 测试结果
+
+小/中规模走 fallback，保持 Correct，避免局部缓冲版本在这些规模上的回退：
+
+```text
+64 64 8 32 32 4
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.321255
+
+126 151 166 96 64 12
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.441167
+```
+
+实验入口直接对比时，x-block 局部缓冲在中等规模仍慢，但目标大规模 Correct 且明显更快：
+
+```text
+126 151 166 96 64 12
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.442217
+Correct! blocking_parallel_rectangle_vectime_extra_array_exp, GStencil/s = 0.255362
+
+4125 2125 1162 1536 1024 256
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 1.080952
+Correct! blocking_parallel_rectangle_vectime_extra_array_exp, GStencil/s = 1.389238
+```
+
+提升为正式版本并删除实验入口后，大规模 x-block path 重复验证：
+
+```text
+4125 2125 1162 1536 1024 256
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 1.180110
+
+4125 2125 1162 1536 1024 256
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 1.119085
+```
+
+同一正式二进制用 `tb=4` 强制走 full-domain fallback，作为旧路径参考：
+
+```text
+4125 2125 1162 1536 1024 4
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 1.004781
+```
+
+说明大规模 x-block path 在同机同构建下相对 fallback 有稳定收益。
+
+### 是否保留
+
+保留。
+
+原因：
+
+- 不改变时间向量组成，不引入 y-skew
+- Correctness 覆盖小/中/大规模
+- 大规模目标参数下相对旧 full-domain 路径有稳定收益
+- 小/中规模通过门槛继续走旧路径，避免局部缓冲拷贝导致回退
+
+## 第七次迭代：单 x 内 y-vector 并行实验（不保留）
+
+### 问题
+
+第六次把 y block 外提成独立 x 扫描后 Wrong，说明不能改变全局 x-sweep 的时间状态顺序。为了继续保留当前时间向量组成，尝试只在每个固定 x 上并行分担 y 向量块：x 仍严格顺序推进，`BV0..BV5` 仍按原顺序轮转。
+
+### 修改方法
+
+新建实验入口 `blocking_parallel_rectangle_vectime_extra_array_exp`：
+
+- 保持 `Input_Output_1..4` 不变
+- 保持连续 y lane 和 `BV0..BV5` 轮转不变
+- 每个 x 位置上用 `#pragma omp parallel` + `#pragma omp for schedule(static)` 分担完整 y vector chunks
+- 每个 y vector chunk 独立从 `BV0..BV4` 或边界 `B` 读取 `y-2..y+5`
+- 尾部 y rows 仍由单线程走正式版本的 direct gather/scatter
+
+### 测试结果
+
+Correctness 通过，但性能显著低于正式版本：
+
+```text
+31 31 4 24 24 4
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.106778
+Correct! blocking_parallel_rectangle_vectime_extra_array_exp, GStencil/s = 0.007861
+
+64 64 8 32 32 4
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.138847
+Correct! blocking_parallel_rectangle_vectime_extra_array_exp, GStencil/s = 0.014734
+
+126 151 166 96 64 12
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.442651
+Correct! blocking_parallel_rectangle_vectime_extra_array_exp, GStencil/s = 0.061026
+```
+
+### 是否保留
+
+不保留。
+
+原因：
+
+- 虽然不改变时间向量组成并保持 Correct
+- 但每个 x 都需要 OpenMP 同步，屏障开销很大
+- 独立 y vector chunk 取消了正式版本跨 chunk 复用 `r0..r4` 的热路径，重复加载增加
+- 中等规模已比正式版本慢约 7 倍，没有必要继续跑大规模或替换正式文件
+
+## 第六次迭代：y-block 独立 x 扫描并行化实验（不保留）
+
+### 问题
+
+第三次 y-block strip-mining 在 x-major 调度下 Correct，但性能低于正式版本。为了保留时间向量组成，同时尝试获得 y block 级并行性，实验把每个 y block 改成独立执行完整 x 扫描。
+
+### 修改方法
+
+新建实验入口 `blocking_parallel_rectangle_vectime_extra_array_exp`：
+
+- 每个 y block 使用私有 `BV0..BV5` 状态
+- 保持连续 y lane 与 `Input_Output_1..4` 组成不变
+- 每个 block 只回写 owner 行，halo 只参与计算
+- 用 `#pragma omp parallel for schedule(static)` 并行处理 y blocks
+
+### 测试结果
+
+小规模从 `T=4` 开始即 Wrong，且错误大量出现在 y=4 之后，不是单纯边界噪声：
+
+```text
+31 31 4 24 24 4
+Correct! blocking_parallel_rectangle_vectime_extra_array
+Wrong! blocking_parallel_rectangle_vectime_extra_array_exp, GStencil/s = 0.000161
+```
+
+中小规模继续 Wrong：
+
+```text
+64 64 8 32 32 4
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.442811
+Wrong! blocking_parallel_rectangle_vectime_extra_array_exp, GStencil/s = 0.000790
+
+126 151 166 96 64 12
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.553217
+Wrong! blocking_parallel_rectangle_vectime_extra_array_exp, GStencil/s = 0.478750
+```
+
+### 是否保留
+
+不保留。
+
+原因：
+
+- 该实验不 Correct
+- 把原来的 `x outer / yblock inner` 调度改成 `yblock outer / x inner` 并不等价
+- 即使每个 y block 使用私有 BV 状态，完整 x 扫描也会让 halo 行按独立状态演化，破坏全局 x-sweep 的时间状态顺序
+- 第三次实验的 Correctness 依赖原 x-major 顺序，不能直接改成 yblock 并行
+
+## 第五次迭代：局部工作区 y-block 并行实验（不保留）
+
+### 问题
+
+第三、四次 strip-mining 版本 Correct 但性能不足。为了避免改动时间向量组成，尝试把每个 y block 拷贝到带 halo 的局部工作区，在局部工作区中直接运行已验证的 4 步 x-time 内核，再只回写 owner 行。这样理论上可以按 y block 并行，同时不改 `Input_Output_1..4` 和 `BV0..BV5` 的组成。
+
+### 修改方法
+
+新建实验入口 `blocking_parallel_rectangle_vectime_extra_array_exp`：
+
+- 将当前正式 x-time 内核改名为实验文件内的 `shapiro_vectime_full_tile`
+- 每个 y block 拷贝 owner + halo 到局部 `LB[2][NX+2*XSTART][local_NY+2*YSTART]`
+- 初始时把两个时间层都设为当前全局 source parity
+- 调用 `shapiro_vectime_full_tile(..., T=VECLEN, ...)`
+- 只把 owner 行的 final parity 回写到全局数组
+
+### 测试结果
+
+`T=4` 小测试 Correct，但性能极低，拷贝/分配开销明显：
+
+```text
+31 31 4 24 24 4
+Correct! blocking_parallel_rectangle_vectime_extra_array_exp, GStencil/s = 0.000133
+```
+
+`T=8` 开始 Wrong：
+
+```text
+64 64 8 32 32 4
+Wrong! blocking_parallel_rectangle_vectime_extra_array_exp
+
+126 151 166 96 64 12
+Wrong! blocking_parallel_rectangle_vectime_extra_array_exp
+```
+
+进一步把 halo 从 8 行增加到 16 行后，`64 64 8 32 32 4` 仍然 Wrong，说明错误不是简单 halo 深度不足，而是跨 4 步 tile 时局部工作区没有保留正式内核依赖的中间层/边界状态。
+
+### 是否保留
+
+不保留。
+
+原因：
+
+- `T>VECLEN` 不 Correct
+- 即使 `T=VECLEN` Correct，性能也远低于正式版本
+- 该方案虽然不改时间向量组成，但局部化破坏了跨 tile 状态假设
+
+## 第四次迭代：strip-mining 热路径去分支与 halo 缩小验证（不保留）
+
+### 问题
+
+第三次 y-block strip-mining 虽然 Correct，但性能低于正式版本。需要确认主要开销是否来自热路径里的 `load_sum_block` 分支和 8 行 halo 重算。
+
+### 修改方法
+
+1. 在实验文件中，把主 y-chunk 热路径恢复为直接 `load_sum_from_bv`，只在低/高边界和 tail 使用 `load_sum_block`。
+2. 继续验证更激进的 halo 缩小：把 `y_halo` 从 `YSLOPE * VECLEN = 8` 改成 `YSLOPE = 2`。
+
+### 测试结果
+
+热路径去分支后仍 Correct，但中小规模没有稳定超过正式版本：
+
+```text
+64 64 8 32 32 4
+Correct! blocking_parallel_rectangle_vectime_extra_array_exp, GStencil/s = 0.252062
+
+126 151 166 96 64 12
+Correct! blocking_parallel_rectangle_vectime_extra_array_exp, GStencil/s = 0.408685
+```
+
+随后把 halo 缩到 2 行后，Correctness 直接失败：
+
+```text
+31 31 4 24 24 4
+Wrong! blocking_parallel_rectangle_vectime_extra_array_exp
+
+64 64 8 32 32 4
+Wrong! blocking_parallel_rectangle_vectime_extra_array_exp
+
+126 151 166 96 64 12
+Wrong! blocking_parallel_rectangle_vectime_extra_array_exp
+```
+
+错误集中在 y block 边界附近，说明 25p radius=2 在 4 步时间向量中仍需要 `YSLOPE * VECLEN` 的依赖闭包；只保留单步半径会破坏时间向量计算结果。
+
+恢复 8 行 halo 并保留热路径直接 BV 读取后，大规模仍未超过正式版：
+
+```text
+4125 2125 1162 1536 1024 256
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 1.155477
+Correct! blocking_parallel_rectangle_vectime_extra_array_exp, GStencil/s = 0.994155
+```
+
+### 是否保留
+
+不保留为正式版本。
+
+处理：
+
+- `y_halo = YSLOPE` 已回退为 `y_halo = YSLOPE * VECLEN`
+- 热路径直接 BV 读取只留在实验文件中继续观察
+- 正式文件不替换
+
+## 第三次迭代：y-block extra-array strip-mining 实验（不保留）
+
+### 问题
+
+正式 256 版本仍是全 y 范围的 x-time extra-array 内核，`xb/yb/tb` 只保持接口兼容，没有体现 y 方向分块。需要在不改变时间向量组成的前提下尝试分块。
+
+### 修改方法
+
+新建实验文件：
+
+```text
+blocking_parallel_rectangle_vectime_extra_array_exp.c
+```
+
+实验策略：
+
+- 保持 `Input_Output_1..4`、连续 y lane、`BV0..BV5` 轮转语义不变
+- 按 `yb` 把 y 方向切成 owner block
+- 每个 block 额外保留 `YSLOPE * VECLEN = 8` 行 halo，避免内部块边界直接读取已经被其它 block 改写的全局 B
+- 每个 block 用独立 `bv_head` 维护 6 个 BV slice 的轮转
+- halo 只参与计算，最终只提交 owner 行，避免用边界 halo 的近似结果覆盖邻块正式输出
+
+### 测试结果
+
+Correctness 全部通过：
+
+```text
+31 31 4 24 24 4
+Correct! blocking_parallel_rectangle_vectime_extra_array_exp, GStencil/s = 0.085422
+
+64 64 8 32 32 4
+Correct! blocking_parallel_rectangle_vectime_extra_array_exp, GStencil/s = 0.230761
+
+126 151 166 96 64 12
+Correct! blocking_parallel_rectangle_vectime_extra_array_exp, GStencil/s = 0.545855
+
+4125 2125 1162 1536 1024 256
+Correct! blocking_parallel_rectangle_vectime_extra_array_exp, GStencil/s = 0.869432
+```
+
+同一轮正式版本性能：
+
+```text
+126 151 166 96 64 12
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.577600
+
+4125 2125 1162 1536 1024 256
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 1.045639
+```
+
+### 是否保留
+
+不保留为正式版本。
+
+原因：
+
+- 虽然没有破坏时间向量组成，且所有测试 Correct
+- 但大规模性能比当前正式版本低约 16.9%
+- 主要开销来自 block halo 重算、owner-store mask、`load_sum_block` 边界判断和每个 y block 的独立 BV 状态维护
+
+该实验文件仅作为下一轮优化参考；在没有明显性能收益前不替换正式函数。
+
+## 第二次迭代：保持连续 y lane 的右侧输入预取与边界整理
+
+### 目标
+
+在不改变当前 256 x-time extra-array 内核依赖结构的前提下，尝试低风险 cache 优化。
+
+必须保持：
+
+- `Input_Output_1..4` 不变
+- `BV0..BV5` 指针轮转不变
+- feature row window 和 y 跨 chunk row 复用逻辑不变
+- lane 仍是连续 y：`y, y+1, y+2, y+3`
+- 不做 true y-wavefront blocking，也不做 even/odd phase split
+
+### 问题
+
+当前稳定版在 x 主体中每个 y chunk 都会从普通 `B` 布局读取：
+
+```c
+B[t%2][x + STRIDE * VECLEN][y]
+```
+
+这个右侧输入行在下一次 x 迭代会变成新的右边界输入。由于 x 行跨度约为一整行 `NY + 2 * YSTART`，硬件顺序预取很难提前把下一 x 行带入 cache。
+
+另一个小问题是热路径中多次重复计算完整 y 向量区间边界，虽然编译器可能会消掉一部分，但代码可读性和边界一致性较差。
+
+### 修改方法
+
+先新建过实验文件：
+
+```text
+blocking_parallel_rectangle_vectime_extra_array_exp.c
+```
+
+实验内容：
+
+1. 在函数入口 hoist y 边界：
+
+```c
+const int y_vec_last = YSTART + ((NY - VECLEN) / VECLEN) * VECLEN;
+const int y_vec_limit = y_vec_last + VECLEN - 1;
+const int y_tail_begin = y_vec_last + VECLEN;
+```
+
+2. 在低边界、主路径、高边界三个 y 向量循环中，对下一 x 迭代将使用的右侧输入行做预取：
+
+```c
+_mm_prefetch((const char *)
+    &B[t%2][x + STRIDE * VECLEN + 1][y], _MM_HINT_T0);
+```
+
+3. 确认实验版 Correct 后，把同一组修改合入正式文件：
+
+```text
+blocking_parallel_rectangle_vectime_extra_array.c
+```
+
+随后删除实验文件和临时 `main.c`/`define.h` 接入口，最终默认构建仍只测试正式函数。
+
+### 测试结果
+
+基础正确性测试全部通过：
+
+```text
+31 31 4 24 24 4
+64 64 8 32 32 4
+126 151 166 96 64 12
+```
+
+最终正式文件测试结果：
+
+```text
+31 31 4 24 24 4
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.073923
+
+64 64 8 32 32 4
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.455111
+
+126 151 166 96 64 12
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.576861
+```
+
+大规模 baseline：
+
+```text
+4125 2125 1162 1536 1024 256
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.480853
+```
+
+实验版曾在同一进程中紧跟稳定版运行，出现过 `1.175218` 和 `1.179085 GStencil/s`。这组数值受函数运行顺序和热缓存影响，不能直接作为最终收益。
+
+替换正式文件后，在默认测试顺序中重复大规模：
+
+```text
+4125 2125 1162 1536 1024 256
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 1.049298
+
+4125 2125 1162 1536 1024 256
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 1.074212
+```
+
+相对本轮 baseline `0.480853 GStencil/s`，正式位置仍有明确收益。
+
+### 是否保留
+
+保留。
+
+原因：
+
+- 没有改变 temporal-vector 依赖和 lane 布局
+- 所有基础测试和大规模测试均 Correct
+- 大规模正式测试顺序下稳定优于当前 baseline
+- 修改局部，风险主要是 `_mm_prefetch` hint 对不同机器收益可能变化，但不会改变计算结果
+
 ## 第一次迭代：尝试迁移 2d9p/3d27p 的 true y-wavefront blocking vectime
 
 ### 目标

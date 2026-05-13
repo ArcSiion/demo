@@ -1,15 +1,18 @@
 #include "define.h"
 
-// 256 版本先收敛到已经验证正确的 x-time extra-array 内核。
-// xb/yb/tb 保持 blocking 接口兼容；真正的 y-wavefront vectime 仍需单独推导 lane 布局。
-void blocking_parallel_rectangle_vectime_extra_array(double* A, int NX, int NY,
-													 int T, int xb, int yb, int tb) {
+// 已验证正确的 full-domain x-time extra-array 内核。
+// wrapper 在大规模时按 x owner block 调用它；小规模直接走该路径避免拷贝开销。
+static void shapiro_vectime_full_domain(double* A, int NX, int NY,
+										int T, int xb, int yb, int tb) {
 	
 	double (* B)[NX + 2 * XSTART][NY + 2 * YSTART] =
 		(double (*)[NX + 2 * XSTART][NY + 2 * YSTART]) A;
 	double tmp[VECLEN];
 
 	int tt, t =0, x, xx, y;
+	const int y_vec_last = YSTART + ((NY - VECLEN) / VECLEN) * VECLEN;
+	const int y_vec_limit = y_vec_last + VECLEN - 1;
+	const int y_tail_begin = y_vec_last + VECLEN;
 
 	vec v_center_0, v_center_1, v_center_2, v_center_3;
 	vec r0_c, r0_d1, r0_d2;
@@ -63,7 +66,7 @@ void blocking_parallel_rectangle_vectime_extra_array(double* A, int NX, int NY,
 			for (int i = 0; i < 5; i++) {
 				int pack_x = XSTART - XSLOPE + i;
 
-				for (y = YSTART; y <= NY + YSTART - VECLEN; y += VECLEN) {
+				for (y = YSTART; y <= y_vec_last; y += VECLEN) {
 					v_center_0 = _mm256_loadu_pd(
 						&B[t%2    ][pack_x + STRIDE * 3][y]);
 					v_center_1 = _mm256_loadu_pd(
@@ -88,7 +91,9 @@ void blocking_parallel_rectangle_vectime_extra_array(double* A, int NX, int NY,
 
 			// y 低边界 chunk：显式 boundary loader，避免主路径分支。
 			// 最后一个完整 y chunk 起点：保证 y..y+VECLEN-1 都在打包区域。
-			if (y <= YSTART + ((NY - VECLEN) / VECLEN) * VECLEN) {
+			if (y <= y_vec_last) {
+				_mm_prefetch((const char *)
+					&B[t%2][x + STRIDE * VECLEN + 1][y], _MM_HINT_T0);
 				in = _mm256_loadu_pd(&B[t%2][x + STRIDE * VECLEN][y]);
 				load_sum_direct(r0_c, r0_d1, r0_d2, y - 2);
 				load_sum_direct(r1_c, r1_d1, r1_d2, y - 1);
@@ -155,9 +160,11 @@ void blocking_parallel_rectangle_vectime_extra_array(double* A, int NX, int NY,
 			// y 主路径：跨 chunk 复用上一轮留下的四行，只补 y+2..y+5。
 			// 最后一个打包 y：BV 只保存完整 VECLEN 分块覆盖到的行。
 			for ( ; y + VECLEN - 1 + YSLOPE <=
-					YSTART + ((NY - VECLEN) / VECLEN) * VECLEN + VECLEN - 1;
+					y_vec_limit;
 				  y += VECLEN) {
 				// in 是下一轮 x 迭代需要拼入 Input_Output 的右侧时间向量。
+				_mm_prefetch((const char *)
+					&B[t%2][x + STRIDE * VECLEN + 1][y], _MM_HINT_T0);
 				in = _mm256_loadu_pd(&B[t%2][x + STRIDE * VECLEN][y]);
 				load_sum_from_bv(r4_c, r4_d1, r4_d2, y + 2);
 
@@ -217,8 +224,10 @@ void blocking_parallel_rectangle_vectime_extra_array(double* A, int NX, int NY,
 			}
 
 			// y 高边界 chunk：只处理剩余完整向量块。
-			for ( ; y <= YSTART + ((NY - VECLEN) / VECLEN) * VECLEN;
+			for ( ; y <= y_vec_last;
 				  y += VECLEN) {
+				_mm_prefetch((const char *)
+					&B[t%2][x + STRIDE * VECLEN + 1][y], _MM_HINT_T0);
 				in = _mm256_loadu_pd(&B[t%2][x + STRIDE * VECLEN][y]);
 				load_sum_from_bv(r0_c, r0_d1, r0_d2, y - 2);
 				load_sum_from_bv(r1_c, r1_d1, r1_d2, y - 1);
@@ -268,17 +277,14 @@ void blocking_parallel_rectangle_vectime_extra_array(double* A, int NX, int NY,
 			}
 
 			// y 尾部不进入 BV 输出 slice，继续 direct gather/scatter。
-			for ( y = YSTART + ((NY - VECLEN) / VECLEN) * VECLEN + VECLEN;
-				  y < NY + YSTART; y++) {
-				if (y - 2 <=
-					YSTART + ((NY - VECLEN) / VECLEN) * VECLEN + VECLEN - 1) {
+			for ( y = y_tail_begin; y < NY + YSTART; y++) {
+				if (y - 2 <= y_vec_limit) {
 					load_sum_from_bv(r0_c, r0_d1, r0_d2, y - 2);
 				} else {
 					load_sum_direct(r0_c, r0_d1, r0_d2, y - 2);
 				}
 
-				if (y - 1 <=
-					YSTART + ((NY - VECLEN) / VECLEN) * VECLEN + VECLEN - 1) {
+				if (y - 1 <= y_vec_limit) {
 					load_sum_from_bv(r1_c, r1_d1, r1_d2, y - 1);
 				} else {
 					load_sum_direct(r1_c, r1_d1, r1_d2, y - 1);
@@ -321,7 +327,7 @@ void blocking_parallel_rectangle_vectime_extra_array(double* A, int NX, int NY,
 			for (int i = 0; i < 5; i++) {
 				int unpack_x = xx - XSLOPE + i;
 
-				for (y = YSTART; y <= NY + YSTART - VECLEN; y += VECLEN) {
+				for (y = YSTART; y <= y_vec_last; y += VECLEN) {
 					vload(v_center_3, Btmp[i][y - YSTART + 3][0]);
 					vload(v_center_2, Btmp[i][y - YSTART + 2][0]);
 					vload(v_center_1, Btmp[i][y - YSTART + 1][0]);
@@ -371,4 +377,76 @@ void blocking_parallel_rectangle_vectime_extra_array(double* A, int NX, int NY,
 	}
 
 	free_extra_array(AV);
+}
+
+void blocking_parallel_rectangle_vectime_extra_array(double* A, int NX, int NY,
+													 int T, int xb, int yb, int tb) {
+	long long work = (long long)NX * NY * T;
+	int block_t = tb - tb % VECLEN;
+	if (block_t < VECLEN) {
+		block_t = VECLEN;
+	}
+
+	if (xb <= 0 || work < 1000000000LL || block_t < 64 || NX <= xb) {
+		shapiro_vectime_full_domain(A, NX, NY, T, xb, yb, tb);
+		return;
+	}
+
+	double (* B)[NX + 2 * XSTART][NY + 2 * YSTART] =
+		(double (*)[NX + 2 * XSTART][NY + 2 * YSTART]) A;
+
+	for (int tt = 0; tt < T; tt += block_t) {
+		int dt = min(block_t, T - tt);
+		int src = tt % 2;
+		int dst = (tt + dt) % 2;
+		int x_halo = XSLOPE * dt;
+
+		double (* SRC)[NY + 2 * YSTART] =
+			(double (*)[NY + 2 * YSTART])
+			malloc(sizeof(double) * (NX + 2 * XSTART) * (NY + 2 * YSTART));
+
+		for (int x = 0; x < NX + 2 * XSTART; x++) {
+			for (int y = 0; y < NY + 2 * YSTART; y++) {
+				SRC[x][y] = B[src][x][y];
+			}
+		}
+
+		#pragma omp parallel for schedule(dynamic, 1)
+		for (int owner_begin = XSTART;
+			 owner_begin < NX + XSTART;
+			 owner_begin += xb) {
+			int owner_end = min(owner_begin + xb, NX + XSTART);
+			int copy_begin = max(XSTART, owner_begin - x_halo);
+			int copy_end = min(NX + XSTART, owner_end + x_halo);
+			int local_NX = copy_end - copy_begin;
+
+			double (* LB)[local_NX + 2 * XSTART][NY + 2 * YSTART] =
+				(double (*)[local_NX + 2 * XSTART][NY + 2 * YSTART])
+				malloc(sizeof(double) * 2 *
+					   (local_NX + 2 * XSTART) * (NY + 2 * YSTART));
+
+			for (int lx = 0; lx < local_NX + 2 * XSTART; lx++) {
+				int gx = copy_begin + lx - XSTART;
+				for (int y = 0; y < NY + 2 * YSTART; y++) {
+					LB[0][lx][y] = SRC[gx][y];
+					LB[1][lx][y] = SRC[gx][y];
+				}
+			}
+
+			shapiro_vectime_full_domain((double *)LB, local_NX, NY, dt,
+										xb, yb, tb);
+
+			int local_parity = dt % 2;
+			for (int gx = owner_begin; gx < owner_end; gx++) {
+				int lx = XSTART + gx - copy_begin;
+				for (int y = YSTART; y < NY + YSTART; y++) {
+					B[dst][gx][y] = LB[local_parity][lx][y];
+				}
+			}
+
+			free(LB);
+		}
+
+		free(SRC);
+	}
 }
