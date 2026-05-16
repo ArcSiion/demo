@@ -375,6 +375,23 @@ static void vectime_extra_array_kernel(double *A, int NX, int NY, int T,
 
 }
 
+static void scalar_kernel(double *A, int NX, int NY, int T)
+{
+	double (* B)[NX + 2 * XSTART][NY + 2 * YSTART] =
+		(double (*)[NX + 2 * XSTART][NY + 2 * YSTART]) A;
+
+	for (int t = 0; t < T; t++) {
+		for (int x = XSTART; x < NX + XSTART; x++) {
+			#pragma ivdep
+			#pragma vector always
+			for (int y = YSTART; y < NY + YSTART; y++) {
+				Compute_scalar(B, t, x, y);
+			}
+		}
+	}
+}
+
+
 void blocking_parallel_rectangle_vectime_extra_array(double* A, int NX, int NY,
 													 int T, int xb, int yb, int tb)
 {
@@ -388,6 +405,27 @@ void blocking_parallel_rectangle_vectime_extra_array(double* A, int NX, int NY,
 	}
 	if (yb <= 0) {
 		yb = NY;
+	}
+	if (NX < STRIDE * VECLEN || NY < VECLEN ||
+		xb < STRIDE * VECLEN || yb < VECLEN) {
+		blocking_parallel_rectangle_scalar(A, NX, NY, T, xb, yb, tb);
+		return;
+	}
+
+	/*
+	 * The local-buffer wrapper recomputes halo.  Large user tb values make
+	 * that halo dominate the owner tile, so keep the internal temporal tile
+	 * small enough for the vector kernel to pay for itself.
+	 */
+	int shape_limited_block_t = min(32,
+		min(max(VECLEN, xb / (4 * XSLOPE)),
+			max(VECLEN, yb / (4 * YSLOPE))));
+	shape_limited_block_t -= shape_limited_block_t % VECLEN;
+	if (shape_limited_block_t < VECLEN) {
+		shape_limited_block_t = VECLEN;
+	}
+	if (block_t > shape_limited_block_t) {
+		block_t = shape_limited_block_t;
 	}
 
 	double (* B)[NX + 2 * XSTART][NY + 2 * YSTART] =
@@ -423,7 +461,7 @@ void blocking_parallel_rectangle_vectime_extra_array(double* A, int NX, int NY,
 		memcpy(SRC, &B[src][0][0],
 			   sizeof(double) * (NX + 2 * XSTART) * (NY + 2 * YSTART));
 
-		#pragma omp parallel for collapse(2) schedule(dynamic, 1) num_threads(threadnum)
+		#pragma omp parallel for collapse(2) schedule(static) num_threads(threadnum)
 		for (int owner_begin = XSTART;
 			 owner_begin < NX + XSTART;
 			 owner_begin += xb) {
@@ -460,8 +498,12 @@ void blocking_parallel_rectangle_vectime_extra_array(double* A, int NX, int NY,
 					memcpy(&LB[1][lx][0], &SRC[gx][gy], local_row_size);
 				}
 
-				vectime_extra_array_kernel((double *)LB, local_NX,
-					local_NY, dt, AV_pool[myid]);
+				if (local_NX < STRIDE * VECLEN || local_NY < VECLEN) {
+					scalar_kernel((double *)LB, local_NX, local_NY, dt);
+				} else {
+					vectime_extra_array_kernel((double *)LB, local_NX,
+						local_NY, dt, AV_pool[myid]);
+				}
 
 				int local_parity = dt % 2;
 				for (int gx = owner_begin; gx < owner_end; gx++) {
