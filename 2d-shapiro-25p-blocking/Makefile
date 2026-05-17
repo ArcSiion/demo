@@ -7,10 +7,13 @@ all: $(EXE)
 
 SRC=main.c naive_vector.c blocking_parallel_rectangle_scalar.c \
 	blocking_parallel_rectangle_vector.c \
-	blocking_parallel_rectangle_vectime_extra_array.c
+	blocking_parallel_rectangle_vectime_extra_array.c \
+	blocking_parallel_rectangle_vectime_true_wavefront.c
 
 BIG_SRC=main_big.c blocking_parallel_rectangle_scalar.c \
-	blocking_parallel_rectangle_vectime_extra_array.c
+	blocking_parallel_rectangle_vector.c \
+	blocking_parallel_rectangle_vectime_extra_array.c \
+	blocking_parallel_rectangle_vectime_true_wavefront.c
 
 $(EXE): $(SRC) *.h
 	$(CC) $(OPT_FLAGS) -mfma -ffp-contract=fast $(OMP_FLAGS) $^ -lm -o $(EXE)

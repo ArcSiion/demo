@@ -1,21 +1,5 @@
 #include "define.h"
 
-static void scalar_kernel(double *A, int NX, int NY, int T)
-{
-	double (* B)[NX + 2 * XSTART][NY + 2 * YSTART] =
-		(double (*)[NX + 2 * XSTART][NY + 2 * YSTART]) A;
-
-	for (int t = 0; t < T; t++) {
-		for (int x = XSTART; x < NX + XSTART; x++) {
-			#pragma ivdep
-			#pragma vector always
-			for (int y = YSTART; y < NY + YSTART; y++) {
-				Compute_scalar(B, t, x, y);
-			}
-		}
-	}
-}
-
 void blocking_parallel_rectangle_vectime_extra_array(double *A, int NX, int NY,
 													 int T, int xb, int yb, int tb)
 {
@@ -86,7 +70,7 @@ void blocking_parallel_rectangle_vectime_extra_array(double *A, int NX, int NY,
 	if (domain_points >= 8LL * 1024LL * 1024LL &&
 		owner_block_count >= max(omp_get_max_threads() / 2, 1) &&
 		recompute_ratio > 1.35) {
-		blocking_parallel_rectangle_vector(A, NX, NY, T, xb, yb, tb);
+		blocking_parallel_rectangle_vectime_true_wavefront(A, NX, NY, T, xb, yb, tb);
 		return;
 	}
 
@@ -151,7 +135,7 @@ void blocking_parallel_rectangle_vectime_extra_array(double *A, int NX, int NY,
 
 				if (local_NX < min_nx_for_vectime ||
 					local_NY < min_ny_for_vectime) {
-					scalar_kernel((double *)LB, local_NX, local_NY, dt);
+					back_scalar((double *)LB, local_NX, local_NY, dt);
 				} else {
 					// Local x-time extra-array body on the copied block.
 					const int NX = local_NX;

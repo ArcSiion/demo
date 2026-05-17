@@ -21,13 +21,14 @@ void blocking_parallel_rectangle_vector(double * A, int NX, int NY, int T,
 	int mylevel;
 	int tt, xx, yy, t, x, y;
 	int xmin, xmax, ybeg, ylo, yhi;
+	int t_begin, t_end, ybeg_first, ybeg_last;
 
 	int xblocknum = max(nb0[0], nb0[1]);
 	int yblocknum = 2 * myceil(NY + YSLOPE * (T - 1), yb);
 	int tblocknum = myceil(T, tb);
 	int wavenum = myceil(T, tb) + 1 + myceil(NY + YSLOPE * (T - 1), yb);
 
-	#pragma omp parallel private(mylevel, tt, t, x, y, xmin, xmax, ybeg, ylo, yhi)
+	#pragma omp parallel private(mylevel, tt, t, x, y, xmin, xmax, ybeg, ylo, yhi, t_begin, t_end, ybeg_first, ybeg_last)
 	{
 		for (int wave = 0; wave < wavenum; wave++) {
 			int yy_begin = max(0, wave - tblocknum);
@@ -40,8 +41,22 @@ void blocking_parallel_rectangle_vector(double * A, int NX, int NY, int T,
 
 					if (xx < nb0[mylevel]) {
 						tt = -tb + (wave - yy) * tb;
+						t_begin = max(tt, 0);
+						t_end = min(tt + 2 * tb, T);
+						ybeg_first = YSTART - wave * tb * YSLOPE +
+							yy * (yb + tb * YSLOPE) -
+							(t_begin - tt) * YSLOPE;
+						ybeg_last = YSTART - wave * tb * YSLOPE +
+							yy * (yb + tb * YSLOPE) -
+							(t_end - 1 - tt) * YSLOPE;
 
-						for (t = max(tt, 0); t < min(tt + 2 * tb, T); t++) {
+						if (t_begin >= t_end ||
+							ybeg_first + yb <= YSTART ||
+							ybeg_last >= NY + YSTART) {
+							continue;
+						}
+
+						for (t = t_begin; t < t_end; t++) {
 							xmin = (mylevel == 1 && xx == 0) ?
 								XSTART :
 								(xright[mylevel] - Bx + xx * ix +

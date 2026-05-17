@@ -963,7 +963,7 @@ void blocking_parallel_rectangle_vectime_extra_array(
 ### 修改方法
 
 - 继续保留 local-buffer extra-array 正确路径
-- 对不合理小块继续退回局部 `scalar_kernel`
+- 对不合理小块继续退回局部 `back_scalar`
 - 增加复算比例判断：
 
 ```c
@@ -1303,7 +1303,7 @@ Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 4.342035
 ```c
 if (local_NX < min_nx_for_vectime ||
     local_NY < min_ny_for_vectime) {
-    scalar_kernel(...);
+    back_scalar(...);
 } else {
     // Local x-time extra-array body on the copied block.
     ...
@@ -1361,3 +1361,468 @@ Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 13.204208
 
 - 1024 的 local-buffer 路径这轮性能低于第十七次记录，可能受运行波动或展开后编译器决策影响
 - 用户目标参数仍走大规模 fallback，主要受 `blocking_parallel_rectangle_vector` 性能波动影响
+
+## 第二十一次迭代：把局部标量 fallback 提到 define.h（保留）
+
+### 目标
+
+按当前书写整理要求，把 local owner block 里“不合理小块退回标量”的 helper 从
+`blocking_parallel_rectangle_vectime_extra_array.c` 中移出去，并把语义名统一为 `back_scalar`。
+
+### 修改内容
+
+- 删除 `blocking_parallel_rectangle_vectime_extra_array.c` 顶部的 `static void scalar_kernel(...)`
+- 在 `define.h` 文件末尾新增 `static inline void back_scalar(...)`
+- 局部 fallback 调用从 `scalar_kernel((double *)LB, local_NX, local_NY, dt)` 改成：
+
+```c
+back_scalar((double *)LB, local_NX, local_NY, dt);
+```
+
+### 测试结果
+
+```text
+31 31 4 24 24 4
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.000376
+
+126 151 166 96 64 12
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.608070
+```
+
+`make -C 2d-shapiro-25p-blocking` 通过，`git diff --check -- 2d-shapiro-25p-blocking` 通过。
+
+### 是否保留
+
+保留。
+
+原因：
+
+- Correctness 通过
+- `blocking_parallel_rectangle_vectime_extra_array.c` 开头不再放局部 scalar helper
+- 小块 fallback 的语义名统一为 `back_scalar`
+
+## 第二十二次迭代：新增 true-wavefront 实验入口（保留）
+
+### 目标
+
+按 true wavefront 优化计划先落地一个独立实验入口，不替换当前正确的
+`blocking_parallel_rectangle_vectime_extra_array`。
+
+### 修改内容
+
+- 新增 `blocking_parallel_rectangle_vectime_true_wavefront.c`
+- 在 `define.h` 中声明 `blocking_parallel_rectangle_vectime_true_wavefront`
+- 在 `main.c` 中新增一项对比测试
+- 在 `Makefile` 中加入新实验文件
+- 补回缺失的 `main_big.c`，用于跳过 `naive_vector` 的大规模 blocking 对比
+
+当前实验入口直接在全局 `B` 上执行 rectangle wavefront，不分配 `SRC/LB_pool`，
+也不做 halo copy/writeback。第一版内部仍使用和 `blocking_parallel_rectangle_vector`
+一致的 scalar/vector 计算作为 correctness baseline，暂不启用 BV extra-array core。
+
+原因：
+
+- 现有 extra-array core 依赖 x-time skew 的左/右边界状态
+- 直接塞进 block 内容易破坏跨 block 的时间斜边依赖
+- 先保留一个全局 wavefront 实验入口，后续再把“确定安全”的 BV core 分段接入
+
+### 测试结果
+
+```text
+31 31 4 24 24 4
+Correct! blocking_parallel_rectangle_vectime_true_wavefront, GStencil/s = 0.000041
+
+126 151 166 96 64 12
+Correct! blocking_parallel_rectangle_vectime_true_wavefront, GStencil/s = 0.157224
+
+1024 1024 1024 128 128 128  (big binary, repeated stable run)
+Correct! blocking_parallel_rectangle_vector,        GStencil/s = 3.405904
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 4.924766
+Correct! blocking_parallel_rectangle_vectime_true_wavefront, GStencil/s = 3.353923
+
+5050 5252 525 128 128 64  (big binary)
+Correct! blocking_parallel_rectangle_vector,        GStencil/s = 14.097197
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 14.060485
+Correct! blocking_parallel_rectangle_vectime_true_wavefront, GStencil/s = 14.100580
+```
+
+单线程 1024 下 true-wavefront baseline 与 vector 基本一致：
+
+```text
+OMP_NUM_THREADS=1
+Correct! blocking_parallel_rectangle_vector,        GStencil/s = 0.430562
+Correct! blocking_parallel_rectangle_vectime_true_wavefront, GStencil/s = 0.431539
+```
+
+### 是否保留
+
+保留。
+
+原因：
+
+- Correctness 覆盖小/中/1024/目标参数
+- 新入口不影响当前正式 vectime 路径
+- `main_big.c` 修复了原 Makefile 中 `big` 目标引用缺失文件的问题
+- 为下一步把 BV extra-array core 接入 global wavefront 提供了稳定对比基线
+
+当前观察：
+
+- 目标参数下 true-wavefront baseline 与 vector 基本持平，说明当前还没有 temporal-vector 收益
+- 1024 下当前正式 local-buffer vectime 仍明显更快
+- 下一步应在新实验入口内做 VECLEN 时间 tile 的安全 core 切分，而不是再调 fallback 条件
+
+## 第二十三次迭代：为 true-wavefront 增加 VECLEN tile 插入点（保留 dormant）
+
+### 目标
+
+继续推进 true-wavefront 实验入口，为后续接入 BV extra-array core 准备 `tv..tv+VECLEN`
+级别的 block-range fallback 结构。
+
+### 修改内容
+
+- 在 `blocking_parallel_rectangle_vectime_true_wavefront.c` 中新增
+  `true_wavefront_back_scalar(...)`
+- 该 helper 按原 rectangle wavefront 公式计算每个 `t` 的 `xmin/xmax/ylo/yhi`
+- 在主循环中增加 `use_vectime_tile` 分支，作为后续接入 BV core 的插入点
+- 当前 `use_vectime_tile = 0`，默认仍走上一轮连续 scalar/vector wavefront baseline
+
+### 尝试过程
+
+曾临时打开 `tv` fallback 分块，让每个 task 按 VECLEN 切成多个小 tile 后调用
+`true_wavefront_back_scalar`。Correctness 通过，但因为还没有 BV core，单纯拆小 tile
+只增加函数/循环调度开销，中规模明显退化：
+
+```text
+126 151 166 96 64 12
+Correct! blocking_parallel_rectangle_vectime_true_wavefront, GStencil/s = 0.060177
+```
+
+因此最终保留 helper 和 dormant 分支，但默认不启用该慢路径。
+
+### 测试结果
+
+```text
+31 31 4 24 24 4
+Correct! blocking_parallel_rectangle_vectime_true_wavefront, GStencil/s = 0.000042
+
+126 151 166 96 64 12
+Correct! blocking_parallel_rectangle_vectime_true_wavefront, GStencil/s = 0.014681
+
+5050 5252 525 128 128 64  (big binary)
+Correct! blocking_parallel_rectangle_vector,        GStencil/s = 14.080247
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 14.177331
+Correct! blocking_parallel_rectangle_vectime_true_wavefront, GStencil/s = 14.103136
+```
+
+### 是否保留
+
+保留 dormant。
+
+原因：
+
+- Correctness 保持通过
+- 默认运行路径不启用慢 tile fallback
+- 后续真正接 BV core 时，可以直接替换 `use_vectime_tile` 分支中的 helper 调用
+- 避免在没有 temporal-vector 收益前破坏第二十二次建立的稳定实验入口
+
+## 第二十四次迭代：继续裁剪 wavefront 的空间空任务（保留）
+
+### 目标
+
+第十五次已经裁掉了时间上完全为空的 `yy`。这次继续大胆一点，在每个有效
+`yy` task 进入 x 循环前，判断它在整个 `[t_begin, t_end)` 时间片内是否都不与
+全局 y domain 相交。
+
+### 修改内容
+
+在 `blocking_parallel_rectangle_scalar.c`、`blocking_parallel_rectangle_vector.c`
+和 `blocking_parallel_rectangle_vectime_true_wavefront.c` 中增加：
+
+```c
+ybeg_first = ... at t_begin;
+ybeg_last  = ... at t_end - 1;
+
+if (t_begin >= t_end ||
+    ybeg_first + yb <= YSTART ||
+    ybeg_last >= NY + YSTART) {
+    continue;
+}
+```
+
+该判断只跳过整段时间都在 y 域外的 task，不改变任何有效计算区域。
+
+同时把 true-wavefront 的 `VECLEN` tile hook 从运行时 `use_vectime_tile = 0`
+改成编译期开关：
+
+```c
+#ifdef SHAPIRO_TRUE_WAVEFRONT_TILE
+...
+#else
+...
+#endif
+```
+
+默认不编译慢 tile fallback，避免 dormant 分支影响 hot path 代码布局。
+
+### 测试结果
+
+```text
+31 31 4 24 24 4
+Correct! blocking_parallel_rectangle_scalar
+Correct! blocking_parallel_rectangle_vector
+Correct! blocking_parallel_rectangle_vectime_extra_array
+Correct! blocking_parallel_rectangle_vectime_true_wavefront
+
+126 151 166 96 64 12
+Correct! blocking_parallel_rectangle_scalar,        GStencil/s = 0.020621
+Correct! blocking_parallel_rectangle_vector,        GStencil/s = 0.137791
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.879999
+Correct! blocking_parallel_rectangle_vectime_true_wavefront, GStencil/s = 0.039260
+
+1024 1024 1024 128 128 128  (big binary)
+Correct! blocking_parallel_rectangle_vector,        GStencil/s = 3.438494
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 4.774456
+Correct! blocking_parallel_rectangle_vectime_true_wavefront, GStencil/s = 3.341461
+
+5050 5252 525 128 128 64  (big binary)
+Correct! blocking_parallel_rectangle_scalar,        GStencil/s = 13.461986
+Correct! blocking_parallel_rectangle_vector,        GStencil/s = 13.888796
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 13.892108
+Correct! blocking_parallel_rectangle_vectime_true_wavefront, GStencil/s = 13.986718
+```
+
+### 是否保留
+
+保留。
+
+原因：
+
+- correctness 覆盖小/中/1024/目标参数
+- 目标参数下 true-wavefront 实验入口略高于 vector
+- 默认 hot path 不再带运行时 dormant tile 分支
+- 该裁剪对 scalar/vector/true-wavefront 都是语义等价的空任务跳过
+
+当前观察：
+
+- 这仍不是 BV core 收益，主要是 wavefront 调度和空任务裁剪收益
+- 下一步如果继续大胆改，应在 `SHAPIRO_TRUE_WAVEFRONT_TILE` 分支内真正接 2d25p BV core
+
+## 第二十五次迭代：把大规模 fallback 切到 true-wavefront baseline（保留）
+
+### 目标
+
+继续推进当前已经验证 Correct 的 true-wavefront 实验入口，把它接到正式
+`blocking_parallel_rectangle_vectime_extra_array` 的大规模 fallback 上。
+
+### 修改内容
+
+原先 local-buffer extra-array 在大规模 halo 重算占比过高时退回：
+
+```c
+blocking_parallel_rectangle_vector(A, NX, NY, T, xb, yb, tb);
+```
+
+现在改为：
+
+```c
+blocking_parallel_rectangle_vectime_true_wavefront(A, NX, NY, T, xb, yb, tb);
+```
+
+影响范围：
+
+- 1024 这类 `domain_points < 8M` 的规模仍走 local-buffer vectime 正式路径
+- 目标参数 `5050 5252 525 128 128 64` 走 true-wavefront baseline fallback
+- 小块不合理分块仍按原逻辑退回 scalar
+
+### 测试结果
+
+```text
+31 31 4 24 24 4
+Correct! blocking_parallel_rectangle_vectime_extra_array
+Correct! blocking_parallel_rectangle_vectime_true_wavefront
+
+126 151 166 96 64 12
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.465966
+Correct! blocking_parallel_rectangle_vectime_true_wavefront, GStencil/s = 0.160484
+
+隐藏 tile 分支编译验证：
+
+```text
+gcc ... -DSHAPIRO_TRUE_WAVEFRONT_TILE ... -o /tmp/exe-2d-shapiro-25p-blocking-tile
+
+31 31 4 24 24 4
+Correct! blocking_parallel_rectangle_vectime_true_wavefront
+
+126 151 166 96 64 12
+Correct! blocking_parallel_rectangle_vectime_true_wavefront, GStencil/s = 0.139897
+```
+
+1024 1024 1024 128 128 128  (big binary)
+Correct! blocking_parallel_rectangle_vector,        GStencil/s = 3.294131
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 4.670555
+Correct! blocking_parallel_rectangle_vectime_true_wavefront, GStencil/s = 3.286539
+
+5050 5252 525 128 128 64  (big binary)
+Correct! blocking_parallel_rectangle_vector,        GStencil/s = 14.011855
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 14.051772
+Correct! blocking_parallel_rectangle_vectime_true_wavefront, GStencil/s = 13.948803
+```
+
+### 是否保留
+
+保留。
+
+原因：
+
+- correctness 覆盖小/中/1024/目标参数
+- 1024 local-buffer vectime 没被切走
+- 目标参数下正式 `vectime_extra_array` 现在不再直接 fallback 到普通 vector
+- true-wavefront 独立项和 vectime fallback 同一逻辑，性能差异主要来自运行顺序噪声
+
+当前观察：
+
+- 这一步把已有 true-wavefront baseline 接入正式大规模 fallback
+- 真正上限仍要来自 `SHAPIRO_TRUE_WAVEFRONT_TILE` 中的 BV core，而不是 fallback 切换
+
+## 第二十六次迭代：替换正式 benchmark 入口并回滚错误 local-recompute tile（保留）
+
+### 目标
+
+按“替换吧，加速流程”的方向，把大规模正式路径收敛到
+`blocking_parallel_rectangle_vectime_extra_array` 一项：
+
+- 目标规模下 `vectime_extra_array` 内部已经 fallback 到 true-wavefront baseline
+- `main.c` / `main_big.c` 不再额外重复跑独立 `true_wavefront` 项
+- 隐藏 `SHAPIRO_TRUE_WAVEFRONT_TILE` 分支撤回到正确的 scalar tile 占位
+
+### 失败尝试
+
+尝试过在隐藏 tile 分支里复用 local-buffer `vectime_extra_array`：
+
+- 先把当前 block 的 owner+halo 拷到临时 LB
+- 先用 scalar 算完整 global tile
+- 再用 local-buffer extra-array 重算 owner 区域并回写最终层
+
+小规模 `31 31 4 24 24 4` 失败，错误集中在第二个 y-block 的
+`y = 20..25`。
+
+根因：
+
+- global true-wavefront 中，前一个 y-block 会覆盖 `B[0]` 的旧时间层
+- 后一个 y-block 的依赖锥需要部分中间态，而不是重新从 `tv` 初始层展开
+- 因此 local-buffer recompute 不能直接塞进 global wavefront
+- 后续正确做法应是：block 开头用 scalar 生成 BV 所需边界/左侧状态，然后从当前 global B pack BV
+
+### 修改内容
+
+- 移除正式 benchmark 中独立 `blocking_parallel_rectangle_vectime_true_wavefront` 输出项
+- 保留 `blocking_parallel_rectangle_vectime_true_wavefront.c`，作为
+  `vectime_extra_array` 大规模 fallback 的实现文件
+- `SHAPIRO_TRUE_WAVEFRONT_TILE` 目前只按 VECLEN 切片调用
+  `true_wavefront_back_scalar`，保证隐藏宏打开时仍是 correct baseline
+
+### 测试结果
+
+```text
+make -C 2d-shapiro-25p-blocking
+make -C 2d-shapiro-25p-blocking big
+pass
+
+31 31 4 24 24 4
+Correct! naive_vector,                              GStencil/s = 0.101158
+Correct! blocking_parallel_rectangle_scalar,        GStencil/s = 0.000184
+Correct! blocking_parallel_rectangle_vector,        GStencil/s = 0.021841
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.014397
+
+126 151 166 96 64 12
+Correct! naive_vector,                              GStencil/s = 0.182847
+Correct! blocking_parallel_rectangle_scalar,        GStencil/s = 0.036563
+Correct! blocking_parallel_rectangle_vector,        GStencil/s = 0.041874
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.405276
+
+gcc ... -DSHAPIRO_TRUE_WAVEFRONT_TILE ... -o /tmp/exe-2d-shapiro-25p-blocking-tile
+31 31 4 24 24 4
+Correct! blocking_parallel_rectangle_vectime_extra_array
+
+gcc ... -DSHAPIRO_TRUE_WAVEFRONT_TILE \
+    -Dblocking_parallel_rectangle_vectime_extra_array=blocking_parallel_rectangle_vectime_true_wavefront ...
+31 31 4 24 24 4
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.030031
+
+126 151 166 96 64 12
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.154305
+
+1024 1024 1024 128 128 128  (big binary; tb clipped to 31 by main)
+Correct! blocking_parallel_rectangle_vector,        GStencil/s = 3.113739
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 4.922305
+
+5050 5252 525 128 128 64  (big binary; tb clipped to 31 by main)
+Correct! blocking_parallel_rectangle_vector,        GStencil/s = 13.808772
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 13.940299
+```
+
+### 是否保留
+
+保留。
+
+原因：
+
+- 正式输出减少一项，目标规模迭代时间更短
+- 目标规模下 `vectime_extra_array` 明确跑赢 `blocking_parallel_rectangle_vector`
+- 1024 规模仍保留 local-buffer vectime 的优势
+- 错误的 local-recompute tile 没有留在隐藏分支里
+
+## 第二十七次迭代：默认 exe 大规模自动跳过 naive（保留）
+
+### 目标
+
+继续加速日常运行流程。用户常用的是：
+
+```text
+./exe-2d-shapiro-25p-blocking 5050 5252 525 128 128 64
+```
+
+原先这个命令会先跑一轮很慢的 `naive_vector`。现在当
+`NX * NY * T >= 1e9` 时，默认 `main.c` 自动改用
+`blocking_parallel_rectangle_scalar` 作为 baseline，不再运行 naive。
+
+小/中规模仍保留 naive correctness baseline。
+
+### 测试结果
+
+```text
+make -C 2d-shapiro-25p-blocking
+pass
+
+31 31 4 24 24 4
+Correct! naive_vector,                              GStencil/s = 0.137286
+Correct! blocking_parallel_rectangle_scalar,        GStencil/s = 0.000581
+Correct! blocking_parallel_rectangle_vector,        GStencil/s = 0.028474
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.007350
+
+126 151 166 96 64 12
+Correct! naive_vector,                              GStencil/s = 0.105085
+Correct! blocking_parallel_rectangle_scalar,        GStencil/s = 0.030901
+Correct! blocking_parallel_rectangle_vector,        GStencil/s = 0.017164
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.106913
+
+1024 1024 1024 128 128 128
+Baseline blocking_parallel_rectangle_scalar,        GStencil/s = 2.121709
+Correct! blocking_parallel_rectangle_vector,        GStencil/s = 3.358151
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 4.885841
+
+5050 5252 525 128 128 64
+Baseline blocking_parallel_rectangle_scalar,        GStencil/s = 13.471442
+Correct! blocking_parallel_rectangle_vector,        GStencil/s = 14.158850
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 14.160678
+```
+
+### 是否保留
+
+保留。
+
+原因：
+
+- 默认大规模命令不再被 naive 拖慢
+- 小/中规模的 naive 校验路径不变
+- 目标参数下 `vectime_extra_array` 仍略高于 `blocking_parallel_rectangle_vector`

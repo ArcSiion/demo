@@ -76,6 +76,7 @@ void naive_vector(double * A, int NX, int NY, int T, int xb, int yb, int tb);
 void blocking_parallel_rectangle_scalar(double * A, int NX, int NY, int T, int xb, int yb, int tb);
 void blocking_parallel_rectangle_vector(double * A, int NX, int NY, int T, int xb, int yb, int tb);
 void blocking_parallel_rectangle_vectime_extra_array(double * A, int NX, int NY, int T, int xb, int yb, int tb);
+void blocking_parallel_rectangle_vectime_true_wavefront(double * A, int NX, int NY, int T, int xb, int yb, int tb);
 int checkresult(int NX, int NY, double (* A_correct)[NY + 2 * YSTART],
 				double (* A)[NY + 2 * YSTART]);
 
@@ -140,3 +141,19 @@ typedef __m256d vec;
 		sum_c12 = _mm256_add_pd(sum_c12, sum_d2_pair);\
 		v_result = _mm256_fmadd_pd(vc12, sum_c12, v_result);\
 	}
+
+static inline void back_scalar(double *A, int NX, int NY, int T)
+{
+	double (* B)[NX + 2 * XSTART][NY + 2 * YSTART] =
+		(double (*)[NX + 2 * XSTART][NY + 2 * YSTART]) A;
+
+	for (int t = 0; t < T; t++) {
+		for (int x = XSTART; x < NX + XSTART; x++) {
+			#pragma ivdep
+			#pragma vector always
+			for (int y = YSTART; y < NY + YSTART; y++) {
+				Compute_scalar(B, t, x, y);
+			}
+		}
+	}
+}
