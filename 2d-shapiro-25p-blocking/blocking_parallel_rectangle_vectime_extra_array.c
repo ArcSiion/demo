@@ -1,5 +1,21 @@
 #include "define.h"
 
+static inline void back_scalar(double *A, int NX, int NY, int T)
+{
+	double (* B)[NX + 2 * XSTART][NY + 2 * YSTART] =
+		(double (*)[NX + 2 * XSTART][NY + 2 * YSTART]) A;
+
+	for (int t = 0; t < T; t++) {
+		for (int x = XSTART; x < NX + XSTART; x++) {
+			#pragma ivdep
+			#pragma vector always
+			for (int y = YSTART; y < NY + YSTART; y++) {
+				Compute_scalar(B, t, x, y);
+			}
+		}
+	}
+}
+
 void blocking_parallel_rectangle_vectime_extra_array(double *A, int NX, int NY,
 													 int T, int xb, int yb, int tb)
 {
@@ -10,14 +26,10 @@ void blocking_parallel_rectangle_vectime_extra_array(double *A, int NX, int NY,
 	const int min_ny_for_vectime = VECLEN;
 
 	int block_t;
-	int shape_limited_block_t;
 	int max_x_halo, max_y_halo;
 	int max_local_NX, max_local_NY;
 	int xblocknum, yblocknum, threadnum;
-	long long owner_block_count;
-	long long domain_points;
 	size_t max_lb_size, max_av_size;
-	double owner_area, local_area, recompute_ratio;
 
 	double (* SRC)[NY + 2 * YSTART];
 	double **LB_pool;
@@ -26,7 +38,8 @@ void blocking_parallel_rectangle_vectime_extra_array(double *A, int NX, int NY,
 	block_t = tb - tb % VECLEN;
 
 	if (block_t < VECLEN) {
-		block_t = VECLEN;
+		blocking_parallel_rectangle_scalar(A, NX, NY, T, xb, yb, tb);
+		return;
 	}
 	if (xb <= 0) {
 		xb = NX;
@@ -41,36 +54,16 @@ void blocking_parallel_rectangle_vectime_extra_array(double *A, int NX, int NY,
 		return;
 	}
 
-	// Keep the local recomputation halo bounded by the owner block size.
-	shape_limited_block_t = min(32,
-		min(max(VECLEN, xb / (4 * XSLOPE)),
-			max(VECLEN, yb / (4 * YSLOPE))));
-	shape_limited_block_t -= shape_limited_block_t % VECLEN;
-	if (shape_limited_block_t < VECLEN) {
-		shape_limited_block_t = VECLEN;
-	}
-	if (block_t > shape_limited_block_t) {
-		block_t = shape_limited_block_t;
-	}
-
 	max_x_halo = XSLOPE * block_t;
 	max_y_halo = YSLOPE * block_t;
 	max_local_NX = min(NX, xb + 2 * max_x_halo);
 	max_local_NY = min(NY, yb + 2 * max_y_halo);
 	xblocknum = myceil(NX, xb);
 	yblocknum = myceil(NY, yb);
-	owner_block_count = (long long)xblocknum * (long long)yblocknum;
-	domain_points = (long long)NX * (long long)NY;
-	owner_area = (double)xb * (double)yb;
-	local_area = (double)(xb + 2 * max_x_halo) *
-		(double)(yb + 2 * max_y_halo);
-	recompute_ratio = local_area / owner_area;
 
-	// Extra-array local blocking loses when halo recomputation dominates.
-	if (domain_points >= 8LL * 1024LL * 1024LL &&
-		owner_block_count >= max(omp_get_max_threads() / 2, 1) &&
-		recompute_ratio > 1.35) {
-		blocking_parallel_rectangle_vectime_true_wavefront(A, NX, NY, T, xb, yb, tb);
+	if ((double)max_local_NX * (double)max_local_NY >
+		1.35 * (double)xb * (double)yb) {
+		blocking_parallel_rectangle_vector(A, NX, NY, T, xb, yb, tb);
 		return;
 	}
 

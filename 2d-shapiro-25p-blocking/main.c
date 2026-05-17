@@ -20,16 +20,6 @@
 			(double)(end.tv_sec - start.tv_sec +\
 				(end.tv_usec - start.tv_usec) * 1.0e-6) / 1000000000L)
 
-#define run_baseline(func, A)	init_data(A);\
-	gettimeofday(&start, 0);\
-	func((double *)A, NX, NY, T, xb, yb, tb);\
-	gettimeofday(&end, 0);\
-	printf("%-10s %-42s NX = %d, NY = %d, T = %d, GStencil/s = %f\n",\
-			"Baseline", #func",", NX, NY, T,\
-			((double) NX * NY * T) /\
-			(double)(end.tv_sec - start.tv_sec +\
-				(end.tv_usec - start.tv_usec) * 1.0e-6) / 1000000000L)
-
 int main(int argc, char* argv[]) {
 
 	struct timeval start, end;
@@ -46,7 +36,6 @@ int main(int argc, char* argv[]) {
 	int xb = atoi(argv[4]);
 	int yb = atoi(argv[5]);
 	int tb = atoi(argv[6]);
-	long long stencil_work = (long long)NX * (long long)NY * (long long)T;
 
 	if (tb > (xb - 1) / (2 * XSLOPE)) {
 		tb = (xb - 1) / (2 * XSLOPE);
@@ -70,12 +59,8 @@ int main(int argc, char* argv[]) {
 		}
 	}
 
-	if (stencil_work >= 1000000000LL) {
-		run_baseline(blocking_parallel_rectangle_scalar, A_correct);
-	} else {
-		run_and_test(naive_vector, A_correct);
-		run_and_test(blocking_parallel_rectangle_scalar, A);
-	}
+	run_and_test(naive_vector, A_correct);
+	run_and_test(blocking_parallel_rectangle_scalar, A);
 	run_and_test(blocking_parallel_rectangle_vector, A);
 	run_and_test(blocking_parallel_rectangle_vectime_extra_array, A);
 
@@ -89,6 +74,7 @@ int checkresult(int NX, int NY, double (* A_correct)[NY + 2 * YSTART],
 				double (* A)[NY + 2 * YSTART]) {
 	int correct = 1;
 	int x, y;
+
 	for (x = XSTART; x < NX + XSTART; x++) {
 		for (y = YSTART; y < NY + YSTART; y++) {
 			if (fabs(A[x][y] - A_correct[x][y]) >
@@ -99,5 +85,6 @@ int checkresult(int NX, int NY, double (* A_correct)[NY + 2 * YSTART],
 			}
 		}
 	}
+
 	return correct;
 }
