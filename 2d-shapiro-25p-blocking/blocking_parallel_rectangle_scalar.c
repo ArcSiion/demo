@@ -18,44 +18,51 @@ void blocking_parallel_rectangle_scalar(double * A, int NX, int NY, int T,
 		bx_first_B1 + (Bx - bx) / 2 + XSTART
 	};
 
-	int wave;
 	int mylevel;
 	int tt, xx, yy, t, x, y;
-	int xmin, xmax, ybeg;
+	int xmin, xmax, ybeg, ylo, yhi;
 
 	int xblocknum = max(nb0[0], nb0[1]);
 	int yblocknum = 2 * myceil(NY + YSLOPE * (T - 1), yb);
+	int tblocknum = myceil(T, tb);
 	int wavenum = myceil(T, tb) + 1 + myceil(NY + YSLOPE * (T - 1), yb);
 
-	for (wave = 0; wave < wavenum; wave++) {
-		#pragma omp parallel for private(mylevel, tt, t, x, y, xmin, xmax, ybeg) collapse(2) schedule(dynamic, 1)
-		for (xx = 0; xx < xblocknum; xx++) {
-			for (yy = 0; yy < yblocknum; yy++) {
-				mylevel = (wave % 2 + yy) % 2;
+	#pragma omp parallel private(mylevel, tt, t, x, y, xmin, xmax, ybeg, ylo, yhi)
+	{
+		for (int wave = 0; wave < wavenum; wave++) {
+			int yy_begin = max(0, wave - tblocknum);
+			int yy_end = min(yblocknum, wave + 1);
 
-				if (xx < nb0[mylevel]) {
-					tt = -tb + (wave - yy) * tb;
+			#pragma omp for collapse(2) schedule(dynamic, 1)
+			for (xx = 0; xx < xblocknum; xx++) {
+				for (yy = yy_begin; yy < yy_end; yy++) {
+					mylevel = (wave % 2 + yy) % 2;
 
-					for (t = max(tt, 0); t < min(tt + 2 * tb, T); t++) {
-						xmin = (mylevel == 1 && xx == 0) ?
-							XSTART :
-							(xright[mylevel] - Bx + xx * ix +
-							 myabs((tt + tb), (t + 1)) * XSLOPE);
-						xmax = (mylevel == 1 && xx == nb0[1] - 1) ?
-							NX + XSTART :
-							(xright[mylevel] + xx * ix -
-							 myabs((tt + tb), (t + 1)) * XSLOPE);
+					if (xx < nb0[mylevel]) {
+						tt = -tb + (wave - yy) * tb;
 
-						// 2d9p 的 y wavefront 推进按 1 格/步，这里改成 YSLOPE 格/步。
-						ybeg = YSTART - wave * tb * YSLOPE +
-							yy * (yb + tb * YSLOPE) -
-							(t - tt) * YSLOPE;
+						for (t = max(tt, 0); t < min(tt + 2 * tb, T); t++) {
+							xmin = (mylevel == 1 && xx == 0) ?
+								XSTART :
+								(xright[mylevel] - Bx + xx * ix +
+								 myabs((tt + tb), (t + 1)) * XSLOPE);
+							xmax = (mylevel == 1 && xx == nb0[1] - 1) ?
+								NX + XSTART :
+								(xright[mylevel] + xx * ix -
+								 myabs((tt + tb), (t + 1)) * XSLOPE);
 
-						for (x = xmin; x < xmax; x++) {
-							#pragma novector
-							for (y = max(YSTART, ybeg);
-								 y < min(NY + YSTART, ybeg + yb); y++) {
-								Compute_scalar(B, t, x, y);
+							// Advance y by the stencil slope for the 25-point case.
+							ybeg = YSTART - wave * tb * YSLOPE +
+								yy * (yb + tb * YSLOPE) -
+								(t - tt) * YSLOPE;
+							ylo = max(YSTART, ybeg);
+							yhi = min(NY + YSTART, ybeg + yb);
+
+							for (x = xmin; x < xmax; x++) {
+								#pragma novector
+								for (y = ylo; y < yhi; y++) {
+									Compute_scalar(B, t, x, y);
+								}
 							}
 						}
 					}

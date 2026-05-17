@@ -194,7 +194,7 @@ Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 1.453677
 
 ### 问题
 
-第九次虽然保证所有规模都走分块路径，但分块仍只在 x 方向发生，`yb` 没有进入核心计算。  
+第九次虽然保证所有规模都走分块路径，但分块仍只在 x 方向发生，`yb` 没有进入核心计算。
 这不符合当前目标：风格上应更接近其它 2D blocking 目录，至少要让 x/y owner block 都参与。
 
 ### 修改方法
@@ -802,7 +802,7 @@ Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 1.074212
 
 现象：
 
-`main.c` 会先按 `xb` 限制 `tb`。例如 `xb=16` 时，`tb` 可能被压到 3。  
+`main.c` 会先按 `xb` 限制 `tb`。例如 `xb=16` 时，`tb` 可能被压到 3。
 实验版 kernel 内部又执行：
 
 ```c
@@ -941,5 +941,423 @@ void blocking_parallel_rectangle_vectime_extra_array(
 126 151 166 96 64 12  Correct!
 ```
 
-当前稳定版本可以作为 256 blocking 目录里的可运行基线。  
+当前稳定版本可以作为 256 blocking 目录里的可运行基线。
 如果继续推进 true y-wavefront blocking，应新开实验文件，避免污染当前正确版本。
+
+## 第十四次迭代：大规模 local-buffer 退回 vector，并移除错误 BV 实验入口（保留）
+
+### 问题
+
+用户目标参数：
+
+```text
+5050 5252 525 128 128 64
+```
+
+在 local-buffer extra-array 分块路径下，owner block 为 `128x128`，但为了跑时间块需要复制并复算 halo。
+当内部 `block_t` 被限制到 16 时，local 区域约为 `(128+64) x (128+64)`，复算面积约为 owner 面积的 2.25 倍。
+这会让 extra-array 的收益被局部拷贝和 halo 重算吞掉，表现为大规模下低于 rectangle scalar/vector。
+
+同时，隐藏的 `SHAPIRO_WAVEFRONT_BV` 实验入口在小规模仍然 Wrong，不能留在正式路径中。
+
+### 修改方法
+
+- 继续保留 local-buffer extra-array 正确路径
+- 对不合理小块继续退回局部 `scalar_kernel`
+- 增加复算比例判断：
+
+```c
+recompute_ratio = local_area / owner_area;
+if (domain_points >= 8LL * 1024LL * 1024LL &&
+    owner_block_count >= max(omp_get_max_threads() / 2, 1) &&
+    recompute_ratio > 1.35) {
+    blocking_parallel_rectangle_vector(A, NX, NY, T, xb, yb, tb);
+    return;
+}
+```
+
+- 移除 `SHAPIRO_WAVEFRONT_BV` 隐藏入口和未 Correct 的 BV 实验实现
+
+### 测试结果
+
+```text
+31 31 4 24 24 4
+Correct! blocking_parallel_rectangle_vectime_extra_array
+
+126 151 166 96 64 12
+Correct! blocking_parallel_rectangle_vectime_extra_array
+
+1024 1024 1024 128 128 128
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 4.587288
+
+5050 5252 525 128 128 64
+Correct! blocking_parallel_rectangle_scalar,        GStencil/s = 11.447654
+Correct! blocking_parallel_rectangle_vector,        GStencil/s = 11.992659
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 11.708329
+```
+
+### 是否保留
+
+保留。
+
+原因：
+
+- 默认路径全部 Correct
+- 错误的 BV 实验入口已经从正式文件移除
+- 大规模从原先约 `7.49` 提升到 `11.7+`
+- 当前仍不是真正 true wavefront，但避免了 local-buffer 分块在大规模下明显输给标量
+
+## 第十五次迭代：裁剪 scalar/vector wavefront 的空 yy 任务（保留）
+
+### 问题
+
+`blocking_parallel_rectangle_scalar/vector` 每个 `wave` 都遍历完整 `yblocknum`。
+但对任意 `yy`：
+
+```c
+tt = -tb + (wave - yy) * tb;
+```
+
+只有当 `[tt, tt + 2 * tb)` 与 `[0, T)` 相交时才会执行实际时间步。
+其它 `yy` 任务进来后，内层 `t` 循环为空，只产生 OpenMP 调度开销。
+
+以用户目标参数为例，`yblocknum` 约为 100，而每个 wave 中时间有效的 `yy` 只有约 `ceil(T/tb)+1`，即 18 条左右。
+
+### 修改方法
+
+在 `blocking_parallel_rectangle_scalar.c` 和 `blocking_parallel_rectangle_vector.c` 中增加：
+
+```c
+tblocknum = myceil(T, tb);
+yy_begin = max(0, wave - tblocknum);
+yy_end = min(yblocknum, wave + 1);
+```
+
+并把 `yy` 循环限制到 `[yy_begin, yy_end)`。
+同时把 `ylo/yhi` 从内层 y 循环表达式中提到 x 循环外。
+
+该修改只跳过原本不会执行任何 `t` 的空任务，不改变计算区域。
+
+### 测试结果
+
+```text
+31 31 4 24 24 4
+Correct! blocking_parallel_rectangle_scalar
+Correct! blocking_parallel_rectangle_vector
+Correct! blocking_parallel_rectangle_vectime_extra_array
+
+126 151 166 96 64 12
+Correct! blocking_parallel_rectangle_scalar,        GStencil/s = 0.108314
+Correct! blocking_parallel_rectangle_vector,        GStencil/s = 0.151638
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.586938
+
+1024 1024 1024 128 128 128
+Correct! blocking_parallel_rectangle_scalar,        GStencil/s = 2.773953
+Correct! blocking_parallel_rectangle_vector,        GStencil/s = 3.269228
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 5.000567
+
+5050 5252 525 128 128 64
+Correct! blocking_parallel_rectangle_scalar,        GStencil/s = 13.256730
+Correct! blocking_parallel_rectangle_vector,        GStencil/s = 13.602250
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 14.052198
+```
+
+### 是否保留
+
+保留。
+
+原因：
+
+- Correctness 全部通过
+- 用户目标参数下三条 blocking 路径都有明显提升
+- `vectime_extra_array` 当前在目标参数下跑赢 scalar/vector
+- 这仍是调度开销优化，不是真正 BV true wavefront
+
+## 第十六次迭代：尝试把 scalar/vector wavefront 改为 static 调度（不保留）
+
+### 尝试
+
+第十五次裁剪空 `yy` 后，每个 wave 的有效任务更少、更规整，因此尝试把：
+
+```c
+schedule(dynamic, 1)
+```
+
+改为：
+
+```c
+schedule(static)
+```
+
+目标是减少 OpenMP 动态调度成本。
+
+### 测试结果
+
+```text
+126 151 166 96 64 12
+Correct! blocking_parallel_rectangle_scalar,        GStencil/s = 0.128942
+Correct! blocking_parallel_rectangle_vector,        GStencil/s = 0.128132
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.691400
+
+1024 1024 1024 128 128 128
+Correct! blocking_parallel_rectangle_scalar,        GStencil/s = 2.293110
+Correct! blocking_parallel_rectangle_vector,        GStencil/s = 2.464248
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 4.731120
+```
+
+### 结论
+
+不保留，已恢复 `schedule(dynamic, 1)`。
+
+原因：
+
+- 126 小规模有收益，但参考价值有限
+- 1024 规模 scalar/vector 明显退化
+- 说明裁剪空任务后，wave 内剩余任务仍存在边界/块大小不均衡，dynamic 调度更稳
+
+## 第十七次迭代：把 scalar/vector 的 parallel region 外提到 wave 循环外（保留）
+
+### 问题
+
+第十五次已经裁剪了空 `yy` 任务，但 `blocking_parallel_rectangle_scalar/vector` 仍然在每个 wave 上重新进入一次：
+
+```c
+#pragma omp parallel for ...
+```
+
+wavefront 需要每个 wave 之间有同步，但不需要每个 wave 都重建 OpenMP team。
+
+### 修改方法
+
+把结构改成：
+
+```c
+#pragma omp parallel private(...)
+{
+    for (int wave = 0; wave < wavenum; wave++) {
+        #pragma omp for collapse(2) schedule(dynamic, 1)
+        ...
+    }
+}
+```
+
+`omp for` 默认 barrier 保留，因此 wavefront 顺序不变。
+
+### 测试结果
+
+```text
+31 31 4 24 24 4
+Correct! blocking_parallel_rectangle_scalar
+Correct! blocking_parallel_rectangle_vector
+Correct! blocking_parallel_rectangle_vectime_extra_array
+
+126 151 166 96 64 12
+Correct! blocking_parallel_rectangle_scalar,        GStencil/s = 0.141305
+Correct! blocking_parallel_rectangle_vector,        GStencil/s = 0.175121
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.649859
+
+1024 1024 1024 128 128 128
+Correct! blocking_parallel_rectangle_scalar,        GStencil/s = 2.657494
+Correct! blocking_parallel_rectangle_vector,        GStencil/s = 3.271688
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 5.070536
+
+5050 5252 525 128 128 64
+Correct! blocking_parallel_rectangle_scalar,        GStencil/s = 13.715370
+Correct! blocking_parallel_rectangle_vector,        GStencil/s = 13.979879
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 14.109567
+
+最终保留版本复测：
+
+5050 5252 525 128 128 64
+Correct! blocking_parallel_rectangle_scalar,        GStencil/s = 13.710090
+Correct! blocking_parallel_rectangle_vector,        GStencil/s = 14.228630
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 14.081144
+```
+
+### 是否保留
+
+保留。
+
+原因：
+
+- Correctness 全部通过
+- 用户目标参数继续提升
+- 1024 的 `vectime_extra_array` 小幅提升
+- 同步语义没有变化，每个 wave 后仍有 barrier
+
+## 第十八次迭代：尝试把 local-buffer wrapper 的 parallel region 外提（不保留）
+
+### 尝试
+
+`blocking_parallel_rectangle_vectime_extra_array` 的 local-buffer wrapper 每个 `block_t` 时间块都会启动一次：
+
+```c
+#pragma omp parallel for collapse(2) schedule(static)
+```
+
+尝试改为一个外层 parallel region：
+
+```c
+#pragma omp parallel num_threads(threadnum)
+{
+    for (tt = 0; tt < T; tt += block_t) {
+        #pragma omp single
+        memcpy(SRC, ...)
+
+        #pragma omp for collapse(2) schedule(static)
+        ...
+    }
+}
+```
+
+时间块之间仍通过 `single` 和 `for` 的隐式 barrier 保序。
+
+### 测试结果
+
+```text
+31 31 4 24 24 4
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.002816
+
+126 151 166 96 64 12
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.462554
+
+1024 1024 1024 128 128 128
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 4.956502
+```
+
+### 结论
+
+不保留，已恢复原来的 per-time-block `parallel for`。
+
+原因：
+
+- Correctness 没问题，但中小规模性能退化
+- 1024 也低于第十七次的 `5.070536`
+- 推测外层 parallel region 中的 `single memcpy` 和固定线程队列没有抵消局部块路径的同步/缓存影响
+
+## 第十九次迭代：尝试把 scalar/vector 的 dynamic chunk 改为 4（不保留）
+
+### 尝试
+
+第十五次裁剪空 `yy` 后，尝试把 scalar/vector wavefront 中的调度从：
+
+```c
+schedule(dynamic, 1)
+```
+
+改为：
+
+```c
+schedule(dynamic, 4)
+```
+
+目标是减少动态调度开销。
+
+### 测试结果
+
+```text
+126 151 166 96 64 12
+Correct! blocking_parallel_rectangle_scalar,        GStencil/s = 0.103105
+Correct! blocking_parallel_rectangle_vector,        GStencil/s = 0.171043
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.731092
+
+1024 1024 1024 128 128 128
+Correct! blocking_parallel_rectangle_scalar,        GStencil/s = 1.474880
+Correct! blocking_parallel_rectangle_vector,        GStencil/s = 1.509979
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 4.342035
+```
+
+### 结论
+
+不保留，已恢复 `schedule(dynamic, 1)`。
+
+原因：
+
+- 1024 上 scalar/vector 退化非常明显
+- 当前有效任务仍存在明显不均衡，需要细粒度动态调度
+
+## 第二十次迭代：把 local vectime helper 展开回分块主体（保留）
+
+### 目标
+
+按 3d27p blocking 的书写习惯整理 `blocking_parallel_rectangle_vectime_extra_array.c`：
+
+- 不再保留独立的 `vectime_extra_array_kernel`
+- local-buffer owner block 内直接展开 x-time extra-array 主体
+- 常规计算/加载宏统一放在 `define.h` 最下面
+- wrapper 中全局数组指针改名为 `GB`，局部块主体继续使用 `B`，避免读写对象混淆
+- `.c/.h` 源码注释保持 ASCII 英文，中文说明只保留在本 debug 记录中
+
+### 修改内容
+
+放到 `define.h` 最下面的宏：
+
+```c
+#define load_sum_from_bv(...)
+#define load_sum_direct(...)
+#define Compute_1vector_25p(...)
+```
+
+局部 owner block 的逻辑变成：
+
+```c
+if (local_NX < min_nx_for_vectime ||
+    local_NY < min_ny_for_vectime) {
+    scalar_kernel(...);
+} else {
+    // Local x-time extra-array body on the copied block.
+    ...
+}
+```
+
+这次只做结构重排，不改：
+
+- halo 复制范围
+- owner 回写范围
+- `block_t` 限制
+- 大规模 fallback 条件
+- BV 轮转和时间向量计算顺序
+
+### 测试结果
+
+```text
+31 31 4 24 24 4
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.001121
+
+126 151 166 96 64 12
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.434252
+
+宏移到 `define.h` 文件末尾并整理源码注释后的最终轻量回归：
+
+31 31 4 24 24 4
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.001134
+
+126 151 166 96 64 12
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 0.535762
+
+1024 1024 1024 128 128 128
+Correct! blocking_parallel_rectangle_scalar,        GStencil/s = 2.706473
+Correct! blocking_parallel_rectangle_vector,        GStencil/s = 2.898409
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 4.518583
+
+5050 5252 525 128 128 64
+Correct! blocking_parallel_rectangle_scalar,        GStencil/s = 11.977639
+Correct! blocking_parallel_rectangle_vector,        GStencil/s = 13.349918
+Correct! blocking_parallel_rectangle_vectime_extra_array, GStencil/s = 13.204208
+```
+
+### 是否保留
+
+保留。
+
+原因：
+
+- Correctness 通过
+- 符合“分块主体中直接展开算法”的书写要求
+- 常规宏统一放回 `define.h`，算法文件开头更干净
+- 目标大规模仍然保持在分块标量之上
+
+当前观察：
+
+- 1024 的 local-buffer 路径这轮性能低于第十七次记录，可能受运行波动或展开后编译器决策影响
+- 用户目标参数仍走大规模 fallback，主要受 `blocking_parallel_rectangle_vector` 性能波动影响

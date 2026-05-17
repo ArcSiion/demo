@@ -35,9 +35,52 @@
 				   __m256d vc22 = _mm256_set1_pd(C22);\
 				   __m256d vc12 = _mm256_set1_pd(C12)
 
-//=====================================
+#define Compute_scalar(A, t, x, y) A[((t) + 1) % 2][x][y] = \
+		C00 * A[(t) % 2][x][y] + \
+		C01 * ( \
+			A[(t) % 2][(x) - 1][y] + \
+			A[(t) % 2][(x) + 1][y] + \
+			A[(t) % 2][x][(y) - 1] + \
+			A[(t) % 2][x][(y) + 1] \
+		) + \
+		C02 * ( \
+			A[(t) % 2][(x) - 2][y] + \
+			A[(t) % 2][(x) + 2][y] + \
+			A[(t) % 2][x][(y) - 2] + \
+			A[(t) % 2][x][(y) + 2] \
+		) + \
+		C11 * ( \
+			A[(t) % 2][(x) - 1][(y) - 1] + \
+			A[(t) % 2][(x) + 1][(y) - 1] + \
+			A[(t) % 2][(x) - 1][(y) + 1] + \
+			A[(t) % 2][(x) + 1][(y) + 1] \
+		) + \
+		C22 * ( \
+			A[(t) % 2][(x) - 2][(y) - 2] + \
+			A[(t) % 2][(x) + 2][(y) - 2] + \
+			A[(t) % 2][(x) - 2][(y) + 2] + \
+			A[(t) % 2][(x) + 2][(y) + 2] \
+		) + \
+		C12 * ( \
+			A[(t) % 2][(x) - 1][(y) - 2] + \
+			A[(t) % 2][(x) + 1][(y) - 2] + \
+			A[(t) % 2][(x) - 1][(y) + 2] + \
+			A[(t) % 2][(x) + 1][(y) + 2] + \
+			A[(t) % 2][(x) - 2][(y) - 1] + \
+			A[(t) % 2][(x) - 2][(y) + 1] + \
+			A[(t) % 2][(x) + 2][(y) - 1] + \
+			A[(t) % 2][(x) + 2][(y) + 1] \
+		)
 
-// 从 BV0..BV4 读取一个 y 行，并提前合成 c/d1/d2 三个横向和。
+void naive_vector(double * A, int NX, int NY, int T, int xb, int yb, int tb);
+void blocking_parallel_rectangle_scalar(double * A, int NX, int NY, int T, int xb, int yb, int tb);
+void blocking_parallel_rectangle_vector(double * A, int NX, int NY, int T, int xb, int yb, int tb);
+void blocking_parallel_rectangle_vectime_extra_array(double * A, int NX, int NY, int T, int xb, int yb, int tb);
+int checkresult(int NX, int NY, double (* A_correct)[NY + 2 * YSTART],
+				double (* A)[NY + 2 * YSTART]);
+
+typedef __m256d vec;
+
 #define load_sum_from_bv(row_c, row_d1, row_d2, yy) {\
 		int y0 = (yy);\
 		vload(row_c, BV2[y0 - YSTART][0]);\
@@ -49,7 +92,6 @@
 		row_d2 = _mm256_add_pd(tmp_left, tmp_right);\
 	}
 
-// 从普通 B 数组直接 gather 一个 y 行，供 y 边界和 y tail 使用。
 #define load_sum_direct(row_c, row_d1, row_d2, yy) {\
 		int y0 = (yy);\
 		vloadset(row_c,	B[(t+1)%2][x                 ][y0],\
@@ -98,51 +140,3 @@
 		sum_c12 = _mm256_add_pd(sum_c12, sum_d2_pair);\
 		v_result = _mm256_fmadd_pd(vc12, sum_c12, v_result);\
 	}
-
-//=====================================================
-
-#define Compute_scalar(A, t, x, y) A[((t) + 1) % 2][x][y] = \
-		C00 * A[(t) % 2][x][y] + \
-		C01 * ( \
-			A[(t) % 2][(x) - 1][y] + \
-			A[(t) % 2][(x) + 1][y] + \
-			A[(t) % 2][x][(y) - 1] + \
-			A[(t) % 2][x][(y) + 1] \
-		) + \
-		C02 * ( \
-			A[(t) % 2][(x) - 2][y] + \
-			A[(t) % 2][(x) + 2][y] + \
-			A[(t) % 2][x][(y) - 2] + \
-			A[(t) % 2][x][(y) + 2] \
-		) + \
-		C11 * ( \
-			A[(t) % 2][(x) - 1][(y) - 1] + \
-			A[(t) % 2][(x) + 1][(y) - 1] + \
-			A[(t) % 2][(x) - 1][(y) + 1] + \
-			A[(t) % 2][(x) + 1][(y) + 1] \
-		) + \
-		C22 * ( \
-			A[(t) % 2][(x) - 2][(y) - 2] + \
-			A[(t) % 2][(x) + 2][(y) - 2] + \
-			A[(t) % 2][(x) - 2][(y) + 2] + \
-			A[(t) % 2][(x) + 2][(y) + 2] \
-		) + \
-		C12 * ( \
-			A[(t) % 2][(x) - 1][(y) - 2] + \
-			A[(t) % 2][(x) + 1][(y) - 2] + \
-			A[(t) % 2][(x) - 1][(y) + 2] + \
-			A[(t) % 2][(x) + 1][(y) + 2] + \
-			A[(t) % 2][(x) - 2][(y) - 1] + \
-			A[(t) % 2][(x) - 2][(y) + 1] + \
-			A[(t) % 2][(x) + 2][(y) - 1] + \
-			A[(t) % 2][(x) + 2][(y) + 1] \
-		)
-
-void naive_vector(double * A, int NX, int NY, int T, int xb, int yb, int tb);
-void blocking_parallel_rectangle_scalar(double * A, int NX, int NY, int T, int xb, int yb, int tb);
-void blocking_parallel_rectangle_vector(double * A, int NX, int NY, int T, int xb, int yb, int tb);
-void blocking_parallel_rectangle_vectime_extra_array(double * A, int NX, int NY, int T, int xb, int yb, int tb);
-int checkresult(int NX, int NY, double (* A_correct)[NY + 2 * YSTART],
-				double (* A)[NY + 2 * YSTART]);
-
-typedef __m256d vec;
